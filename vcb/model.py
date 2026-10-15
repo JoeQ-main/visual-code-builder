@@ -929,3 +929,118 @@ def block_doc(kind: str) -> str:
 
 def field_doc(kind: str, name: str) -> str:
     return DOCS.get(kind, ("", {}))[1].get(name, "")
+
+
+# --------------------------------------------------------------------------
+# The most common built-in functions, offered as ready-made blocks
+# --------------------------------------------------------------------------
+@dataclass(frozen=True)
+class FunctionEntry:
+    word: str        # the function name shown on the button
+    params: str      # signature shown in hints
+    template: str    # expression placed in the block
+    result: str      # variable that receives the result; "" for no result
+    doc: str
+    inputs: str
+    outputs: str
+
+
+def _fn(word, params, template, result, doc, inputs, outputs):
+    return FunctionEntry(word, params, template, result, doc, inputs, outputs)
+
+
+FUNCTIONS: list[FunctionEntry] = [
+    _fn("print", "*objects, sep=' ', end='\n'", "print(value)", "",
+        "Writes values to the screen (standard output).",
+        "values to show", "nothing; text appears on screen"),
+    _fn("input", "prompt=''", "input('Enter a value: ')", "text",
+        "Pauses and reads one line typed by the user.",
+        "prompt shown to the user", "the typed line, as str"),
+    _fn("len", "obj", "len(items)", "count",
+        "Number of items in a sequence, string or collection.",
+        "a sequence or collection", "item count, as int"),
+    _fn("range", "start, stop, step", "range(10)", "numbers",
+        "Sequence of integers from start up to, but not including, stop.",
+        "stop (and optional start, step)", "lazy sequence of ints"),
+    _fn("str", "value", "str(value)", "text",
+        "Converts a value to its text form.", "any value", "str"),
+    _fn("int", "value", "int(value)", "number",
+        "Converts text or a decimal number to a whole number.",
+        "str or float", "int"),
+    _fn("float", "value", "float(value)", "number",
+        "Converts text or an int to a decimal number.", "str or int", "float"),
+    _fn("bool", "value", "bool(value)", "flag",
+        "The truth value of anything: empty and zero are False.",
+        "any value", "True or False"),
+    _fn("list", "iterable", "list(items)", "items",
+        "Builds a list from an iterable, or an empty list.",
+        "iterable (optional)", "new list"),
+    _fn("dict", "**kwargs", "dict(key='value')", "mapping",
+        "Builds a dictionary of key/value pairs.",
+        "pairs or keywords (optional)", "new dict"),
+    _fn("set", "iterable", "set(items)", "unique",
+        "Builds a set holding each distinct item once.",
+        "iterable (optional)", "new set"),
+    _fn("tuple", "iterable", "tuple(items)", "frozen",
+        "Builds an immutable tuple from an iterable.",
+        "iterable (optional)", "new tuple"),
+    _fn("type", "value", "type(value)", "kind",
+        "The class of a value.", "any value", "its class"),
+    _fn("isinstance", "value, classinfo", "isinstance(value, int)", "matches",
+        "Whether a value is an instance of a class (or tuple of classes).",
+        "value, class or tuple of classes", "True or False"),
+    _fn("open", "file, mode='r'", "open('file.txt')", "file",
+        "Opens a file and returns a file object; best used in a with block.",
+        "path and mode ('r', 'w', 'a', 'b')", "file object"),
+    _fn("sorted", "iterable, key=None, reverse=False", "sorted(items)", "ordered",
+        "A new list of the items in ascending order.",
+        "iterable (optional key, reverse)", "new sorted list"),
+    _fn("reversed", "sequence", "reversed(items)", "backwards",
+        "Iterates the items from last to first.", "sequence", "reverse iterator"),
+    _fn("enumerate", "iterable, start=0", "enumerate(items)", "pairs",
+        "Pairs every item with its position: (0, a), (1, b), ...",
+        "iterable (optional start)", "iterator of (index, item)"),
+    _fn("zip", "*iterables", "zip(first, second)", "pairs",
+        "Pairs up items from several iterables position by position.",
+        "two or more iterables", "iterator of tuples"),
+    _fn("map", "function, iterable", "map(func, items)", "mapped",
+        "Applies a function to every item.",
+        "function, iterable", "iterator of results"),
+    _fn("filter", "function, iterable", "filter(func, items)", "kept",
+        "Keeps only the items for which the function returns true.",
+        "function, iterable", "iterator of kept items"),
+    _fn("sum", "iterable, start=0", "sum(numbers)", "total",
+        "Adds up all the numbers.", "iterable of numbers", "the total"),
+    _fn("min", "iterable", "min(values)", "smallest",
+        "The smallest item.", "iterable or several values", "smallest item"),
+    _fn("max", "iterable", "max(values)", "largest",
+        "The largest item.", "iterable or several values", "largest item"),
+    _fn("abs", "number", "abs(number)", "magnitude",
+        "Absolute value: the distance from zero.", "number", "non-negative number"),
+    _fn("round", "number, ndigits=None", "round(number, 2)", "rounded",
+        "Rounds to a number of decimal places (none gives an int).",
+        "number, decimal places", "rounded number"),
+    _fn("any", "iterable", "any(flags)", "some",
+        "True if at least one item is true.", "iterable", "True or False"),
+    _fn("all", "iterable", "all(flags)", "every",
+        "True if every item is true (and for an empty iterable).",
+        "iterable", "True or False"),
+    _fn("iter", "iterable", "iter(items)", "iterator",
+        "An iterator that walks the items one at a time.",
+        "iterable", "iterator"),
+    _fn("next", "iterator, default", "next(iterator)", "item",
+        "The next item from an iterator, or default when exhausted.",
+        "iterator (optional default)", "next item"),
+]
+
+
+def block_from_function(entry: FunctionEntry) -> Block:
+    """A call block for a function used for its effect, otherwise an
+    assignment that keeps the result, with descriptions filled in."""
+    if entry.result:
+        block = new_block("assign", targets=entry.result, value=entry.template)
+    else:
+        block = new_block("call", value=entry.template)
+    block.desc_in = entry.inputs
+    block.desc_out = entry.outputs
+    return block

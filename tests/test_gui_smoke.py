@@ -238,3 +238,67 @@ def test_single_column_width_is_the_widest_one_column_width():
     from vcb.palette import columns_for_width, single_column_width
     w = single_column_width()
     assert columns_for_width(w) == 1 and columns_for_width(w + 1) == 2
+
+
+def test_function_tab_adds_block_in_block_style(app):
+    length = next(f for f in model.FUNCTIONS if f.word == "len")
+    app.pick_function(length)
+    block = app.canvas.blocks[0]
+    assert block.kind == "assign" and block.fields["value"] == "len(items)"
+    assert block.desc_in == "a sequence or collection"
+    assert "count = len(items)" in app.canvas.source()
+    app.pick_function(next(f for f in model.FUNCTIONS if f.word == "print"))
+    assert app.canvas.blocks[1].kind == "call"
+
+
+def test_editing_real_code_updates_canvas(app):
+    app.open_file(str(SAMPLE))
+    app.update()
+    n = len(app.canvas.blocks)
+    app.code.insert("end", "\nEXTRA = 42\n")
+    app._on_code_typed()
+    assert "edited" in app.syntax_label.cget("text")
+    assert app.apply_code()
+    assert len(app.canvas.blocks) == n + 1
+    assert app.canvas.blocks[-1].title() == "EXTRA = 42"
+    assert app.modified and "syntax OK" in app.syntax_label.cget("text")
+    # applying again with no edits is a no-op
+    assert app.apply_code() and len(app.canvas.blocks) == n + 1
+
+
+def test_invalid_real_code_is_not_applied(app):
+    app.open_file(str(SAMPLE))
+    app.update()
+    before = app.canvas.source()
+    app.code.insert("end", "\ndef broken(:\n")
+    assert not app.apply_code(silent=True)
+    assert app.canvas.source() == before
+    assert "syntax error" in app.syntax_label.cget("text")
+    # the user's text is left in place for fixing
+    assert "def broken(:" in app.code.get("1.0", "end")
+
+
+def test_real_code_edit_keeps_block_positions(app):
+    app.open_file(str(SAMPLE))
+    app.update()
+    area = by_name(app, "area")
+    drag(app, area, area.x + 5 + 300, area.y + 5 + 200)
+    moved_x, moved_y = area.x, area.y
+    text = app.code.get("1.0", "end-1c").replace("radius must be positive",
+                                                "radius must be >= 0")
+    app.code.delete("1.0", "end")
+    app.code.insert("1.0", text)
+    assert app.apply_code()
+    again = by_name(app, "area")
+    assert (again.x, again.y) == (moved_x, moved_y)
+    assert "radius must be >= 0" in app.canvas.source()
+
+
+def test_tab_moves_focus_instead_of_inserting(app):
+    assert app.bind_class("Text", "<Tab>")
+    assert app.bind_class("TEntry", "<Tab>")
+    app.code.focus_set()
+    before = app.code.get("1.0", "end")
+    result = app._focus_next(SimpleNamespace(widget=app.code))
+    assert result == "break"
+    assert app.code.get("1.0", "end") == before

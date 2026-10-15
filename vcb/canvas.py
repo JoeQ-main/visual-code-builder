@@ -67,10 +67,23 @@ class CanvasView(tk.Frame):
         c.bind("<Configure>", lambda e: self._update_scrollregion())
 
     # ------------------------------------------------------------------ data
-    def set_blocks(self, blocks: list[Block]):
+    def set_blocks(self, blocks: list[Block], keep_positions_from=None):
+        """Replace all blocks. With ``keep_positions_from`` (the previous
+        top-level blocks), blocks whose kind and title match keep their old
+        position and expanded state; everything is re-arranged otherwise."""
         self.blocks = list(blocks)
         self.selected = None
-        layout.auto_arrange(self.blocks, self.show_desc)
+        old = {(b.kind, b.title()): b for b in (keep_positions_from or [])}
+        matched = []
+        for b in self.blocks:
+            prev = old.pop((b.kind, b.title()), None)
+            if prev is not None:
+                matched.append((b, prev))
+        if keep_positions_from and len(matched) == len(self.blocks):
+            for b, prev in matched:
+                b.x, b.y, b.expanded = prev.x, prev.y, prev.expanded
+        else:
+            layout.auto_arrange(self.blocks, self.show_desc)
         self.redraw()
         self.canvas.xview_moveto(0)
         self.canvas.yview_moveto(0)
@@ -182,6 +195,9 @@ class CanvasView(tk.Frame):
     def redraw(self):
         c = self.canvas
         c.delete("all")
+        layout.layout_all(self.blocks, self.show_desc)
+        dragging = self._drag["block"] if self._drag and self._drag.get("moved") else None
+        layout.push_apart(self.blocks, skip=dragging)
         layout.layout_all(self.blocks, self.show_desc)
         self._draw_column_labels()
         for b in self.blocks:

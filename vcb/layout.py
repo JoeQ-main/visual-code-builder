@@ -177,6 +177,23 @@ def auto_arrange(blocks, show_desc: bool):
             y += b.h + STACK_GAP
 
 
+def push_apart(blocks, skip: Block | None = None):
+    """Move top-level blocks down so none overlaps one above it.
+
+    Heights change when descriptions are toggled or a block is expanded;
+    this keeps each column readable without discarding the user's layout.
+    """
+    placed: list[Block] = []
+    for b in sorted(blocks, key=lambda b: (b.y, b.x)):
+        if b is skip:
+            continue
+        for p in placed:
+            overlap_x = p.x < b.x + b.w and b.x < p.x + p.w
+            if overlap_x and p.y <= b.y < p.y + p.h + CHILD_GAP:
+                b.y = p.y + p.h + STACK_GAP
+        placed.append(b)
+
+
 def next_free_y(blocks, col: str | None = None) -> float:
     ys = [b.y + b.h for b in blocks if col is None or column(b) == col]
     return max(ys, default=STACK_Y - STACK_GAP) + STACK_GAP

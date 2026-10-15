@@ -9,8 +9,8 @@ from tkinter import filedialog, messagebox, ttk
 from . import layout, model
 from .canvas import CanvasView
 from .editor import EditorPanel
-from .model import Block, PaletteEntry
-from .palette import FileExplorer, PalettePanel, single_column_width
+from .model import Block, FunctionEntry, PaletteEntry
+from .palette import FileExplorer, FunctionPalette, PalettePanel, single_column_width
 
 APP_NAME = "Visual Code Builder"
 EDITOR_W = 330
@@ -89,8 +89,11 @@ class App(tk.Tk):
         left = ttk.Notebook(outer, width=250)
         self._left = left
         self.palette = PalettePanel(left, on_pick=self.pick_entry, on_hint=self.set_hint)
+        self.functions = FunctionPalette(left, on_pick=self.pick_function,
+                                         on_hint=self.set_hint)
         self.explorer = FileExplorer(left, on_open=self.open_file)
         left.add(self.palette, text="Blocks")
+        left.add(self.functions, text="Functions")
         left.add(self.explorer, text="Files")
         outer.add(left, weight=0)
 
@@ -105,14 +108,21 @@ class App(tk.Tk):
         preview = ttk.Frame(outer, width=380)
         head = ttk.Frame(preview)
         head.grid(row=0, column=0, columnspan=2, sticky="ew")
-        ttk.Label(head, text="Generated code", font=("Segoe UI", 9, "bold")).pack(
+        ttk.Label(head, text="Real code", font=("Segoe UI", 9, "bold")).pack(
             side="left", padx=4, pady=2)
         self.syntax_label = ttk.Label(head, text="")
         self.syntax_label.pack(side="left", padx=8)
+        ttk.Button(head, text="Apply", command=self.apply_code, width=7).pack(
+            side="right", padx=4, pady=2)
         self.code = tk.Text(preview, width=48, font=("Consolas", 10), wrap="none",
-                            state="disabled", background="#f8fafc")
+                            background="#f8fafc", undo=True)
         self.code.tag_configure("selected", background="#fde68a")
+        self.code.bind("<FocusOut>", lambda e: self.apply_code(silent=True))
+        self.code.bind("<KeyRelease>", self._on_code_typed)
+        self.code.bind("<Tab>", self._focus_next)
+        self.code.bind("<Shift-Tab>", self._focus_prev)
         self._spans: dict[int, tuple[int, int]] = {}
+        self._last_src = ""
         ysb = ttk.Scrollbar(preview, orient="vertical", command=self.code.yview)
         xsb = ttk.Scrollbar(preview, orient="horizontal", command=self.code.xview)
         self.code.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
@@ -135,6 +145,11 @@ class App(tk.Tk):
         self.bind_all("<Control-d>", lambda e: self._if_canvas(self.canvas.duplicate_block))
         self.bind_all("<Control-l>", lambda e: self.canvas.auto_arrange())
         self.bind_all("<Delete>", lambda e: self._if_canvas(self.canvas.delete_block))
+        # Tab always moves between fields; it never inserts whitespace.
+        self.bind_class("Text", "<Tab>", self._focus_next)
+        self.bind_class("Text", "<Shift-Tab>", self._focus_prev)
+        self.bind_class("TEntry", "<Tab>", self._focus_next)
+        self.bind_class("TEntry", "<Shift-Tab>", self._focus_prev)
 
     def _if_canvas(self, fn):
         focus = self.focus_get()
@@ -173,16 +188,60 @@ class App(tk.Tk):
 
     def refresh_preview(self):
         src, self._spans = self.canvas.source_with_spans()
-        self.code.configure(state="normal")
+        self._last_src = src
         self.code.delete("1.0", "end")
         self.code.insert("1.0", src)
-        self.code.configure(state="disabled")
+        self.code.edit_reset()
+        self._show_syntax(src)
+
+    def _show_syntax(self, src: str) -> SyntaxError | None:
         err = model.syntax_error(src)
         if err is None:
             self.syntax_label.configure(text="syntax OK", foreground="#15803d")
         else:
             self.syntax_label.configure(
                 text=f"syntax error line {err.lineno}: {err.msg}", foreground="#b91c1c")
+        return err
+
+    def _code_text(self) -> str:
+        return self.code.get("1.0", "end-1c")
+
+    def _code_edited(self) -> bool:
+        return self._code_text().rstrip("\n") != self._last_src.rstrip("\n")
+
+    def _on_code_typed(self, event=None):
+        if event is not None and event.keysym in ("Tab", "Shift_L", "Shift_R"):
+            return
+        if self._code_edited():
+            self.syntax_label.configure(
+                text="edited: click Apply or leave the pane", foreground="#b45309")
+
+    def apply_code(self, silent: bool = False) -> bool:
+        """Re-parse the Real code pane into blocks when it was edited."""
+        if not self._code_edited():
+            return True
+        text = self._code_text()
+        err = self._show_syntax(text)
+        if err is not None:
+            if not silent:
+                messagebox.showerror(
+                    APP_NAME, f"Cannot apply: syntax error on line {err.lineno}:\n{err.msg}")
+            return False
+        blocks = model.parse_source(text)
+        self.canvas.set_blocks(blocks, keep_positions_from=self.canvas.blocks)
+        self.modified = True
+        self.refresh_preview()
+        self.update_title()
+        self.set_status("Applied the edited code to the canvas.")
+        return True
+
+    def _focus_next(self, event):
+        event.widget.tk_focusNext().focus_set()
+        return "break"
+
+    def _focus_prev(self, event):
+        event.widget.tk_focusPrev().focus_set()
+        return "break"
 
     def set_status(self, text: str):
         self.status.configure(text=text)
@@ -211,6 +270,16 @@ class App(tk.Tk):
             else:
                 self.canvas.add_block(block, (host, entry.slot, None))
             return
+        self._add_new_block(block)
+
+    def pick_function(self, entry: FunctionEntry):
+        self._add_new_block(model.block_from_function(entry))
+        self.set_status(f"Added {entry.word}(): {entry.doc}")
+
+    def _add_new_block(self, block: Block):
+        """Inside the selected container, after the selected block, or at the
+        end of the program flow."""
+        sel = self.canvas.selected
         if sel is not None and "body" in sel.spec.slots:
             self.canvas.add_block(block, (sel, "body", None))
         elif sel is not None and sel.parent is not None:

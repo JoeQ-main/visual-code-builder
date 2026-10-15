@@ -129,3 +129,22 @@ def test_title_parts_split_keyword():
     assert layout.title_parts(blocks[0].slots["body"][0]) == ("return", " 1")
     assert layout.title_parts(blocks[1]) == ("", "x = 2")
     assert layout.title_parts(blocks[2]) == ("try*", "")
+
+
+def test_push_apart_resolves_overlaps_after_height_change():
+    blocks = model.parse_source("def f():\n    pass\n\n\ndef g():\n    pass\n")
+    layout.auto_arrange(blocks, show_desc=False)
+    f, g = blocks
+    f.desc_in = "lots of description text"
+    f.desc_out = "and more"
+    f.slots["body"][0].desc_in = "inner"
+    layout.layout_all(blocks, show_desc=True)   # f grows, g stays put
+    assert g.y < f.y + f.h
+    layout.push_apart(blocks)
+    assert g.y >= f.y + f.h
+    # blocks in different columns are left alone
+    blocks = model.parse_source("x = 1\ndef f():\n    pass\n")
+    layout.auto_arrange(blocks, show_desc=False)
+    ys = [b.y for b in blocks]
+    layout.push_apart(blocks)
+    assert [b.y for b in blocks] == ys

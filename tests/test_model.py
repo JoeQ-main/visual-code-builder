@@ -230,3 +230,15 @@ def test_every_kind_and_field_is_documented():
         assert model.block_doc(kind), kind
         for name, _ in spec.fields:
             assert model.field_doc(kind, name), f"{kind}.{name}"
+
+
+def test_thirty_common_functions_make_valid_blocks():
+    assert len(model.FUNCTIONS) == 30
+    assert len({f.word for f in model.FUNCTIONS}) == 30
+    for entry in model.FUNCTIONS:
+        block = model.block_from_function(entry)
+        ast.parse(model.generate_source([block]))
+        assert entry.word in block.fields["value"]
+        assert block.desc_in and block.desc_out and entry.doc
+    assert model.block_from_function(model.FUNCTIONS[0]).kind == "call"   # print
+    assert model.block_from_function(model.FUNCTIONS[2]).kind == "assign"  # len

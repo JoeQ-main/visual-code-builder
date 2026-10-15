@@ -22,25 +22,26 @@ def single_column_width() -> int:
     return GRID_MARGIN + 2 * BUTTON_MIN_W - 1
 
 
-class PalettePanel(ttk.Frame):
-    """Buttons, one per reserved word, that add a block when clicked.
+class ButtonPalette(ttk.Frame):
+    """A grid of buttons that add blocks when clicked.
 
-    The button grid reflows to as many columns as fit the panel width.
+    ``sections`` is a list of ``(title, entries)``; every entry has a
+    ``word`` for the button text. The grid reflows to as many columns as
+    fit the panel width.
     """
 
-    def __init__(self, master, on_pick, on_hint):
+    def __init__(self, master, intro, sections, on_pick, on_hint, hint_for):
         super().__init__(master, padding=6)
         self.on_pick = on_pick
         self.on_hint = on_hint
+        self.hint_for = hint_for
         self._cols = 0
         self._grids: list[tuple[ttk.Frame, list[ttk.Button]]] = []
-        self._intro = ttk.Label(
-            self, text="Click a word to add its block. With a container selected, "
-            "the block goes inside it.", wraplength=200, justify="left",
-            foreground="#555")
+        self._intro = ttk.Label(self, text=intro, wraplength=200, justify="left",
+                                foreground="#555")
         self._intro.pack(anchor="w", pady=(0, 6))
-        self._section("Reserved words", model.PALETTE)
-        self._section("Other statements", model.PALETTE_EXTRA)
+        for title, entries in sections:
+            self._section(title, entries)
         self.bind("<Configure>", self._on_resize)
         self._reflow(3)
 
@@ -53,11 +54,7 @@ class PalettePanel(ttk.Frame):
         for entry in entries:
             btn = ttk.Button(grid, text=entry.word, width=8,
                              command=lambda e=entry: self.on_pick(e))
-            article = "an" if entry.kind[0] in "aeiou" else "a"
-            hint = entry.note or f"Add {article} {entry.kind} block."
-            doc = model.block_doc(entry.kind)
-            if doc:
-                hint = f"{hint}  {doc}"
+            hint = self.hint_for(entry)
             btn.bind("<Enter>", lambda e, h=hint: self.on_hint(h))
             btn.bind("<Leave>", lambda e: self.on_hint(""))
             buttons.append(btn)
@@ -77,6 +74,42 @@ class PalettePanel(ttk.Frame):
                 grid.columnconfigure(i, weight=1 if i < cols else 0)
             for n, btn in enumerate(buttons):
                 btn.grid(row=n // cols, column=n % cols, sticky="ew", padx=1, pady=1)
+
+
+def keyword_hint(entry: model.PaletteEntry) -> str:
+    article = "an" if entry.kind[0] in "aeiou" else "a"
+    hint = entry.note or f"Add {article} {entry.kind} block."
+    doc = model.block_doc(entry.kind)
+    return f"{hint}  {doc}" if doc else hint
+
+
+def function_hint(entry: model.FunctionEntry) -> str:
+    result = f" → {entry.result}" if entry.result else ""
+    return f"{entry.word}({entry.params}){result}: {entry.doc}"
+
+
+class PalettePanel(ButtonPalette):
+    """One button per reserved word, plus the other statement kinds."""
+
+    def __init__(self, master, on_pick, on_hint):
+        super().__init__(
+            master,
+            "Click a word to add its block. With a container selected, the block "
+            "goes inside it.",
+            [("Reserved words", model.PALETTE), ("Other statements", model.PALETTE_EXTRA)],
+            on_pick, on_hint, keyword_hint)
+
+
+class FunctionPalette(ButtonPalette):
+    """The 30 most common built-in functions as ready-made blocks."""
+
+    def __init__(self, master, on_pick, on_hint):
+        super().__init__(
+            master,
+            "Click a function to add a block that calls it. Functions that return "
+            "a value get an assignment block; print gets a call block.",
+            [("Built-in functions", model.FUNCTIONS)],
+            on_pick, on_hint, function_hint)
 
 
 class FileExplorer(ttk.Frame):
