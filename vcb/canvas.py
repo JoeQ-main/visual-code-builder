@@ -7,30 +7,42 @@ import tkinter.font as tkfont
 from . import layout, model
 from .model import Block
 
-# Light header tint per category (containers only) and a strong accent used
-# for the left spine / stripe. Structure is carried by shape; colour is a hint.
-FILL = {
-    "definition": "#dbeafe", "flow": "#fef3c7", "loop": "#dcfce7", "error": "#fee2e2",
-    "context": "#ede9fe", "simple": "#f3f4f6", "import": "#e0f2fe", "scope": "#fae8ff",
-}
+# Colours come from the Okabe-Ito palette, which stays distinguishable for
+# the common forms of colour-blindness. Structure is carried by shape
+# (spines, header bands, keyword labels); colour is only a secondary hint.
+# ACCENT is the strong colour of the left spine / stripe, FILL its light tint
+# for container headers.
 ACCENT = {
-    "definition": "#2563eb", "flow": "#d97706", "loop": "#16a34a", "error": "#dc2626",
-    "context": "#7c3aed", "simple": "#6b7280", "import": "#0284c7", "scope": "#c026d3",
+    "definition": "#0072b2",   # blue
+    "flow": "#e69f00",         # orange
+    "loop": "#009e73",         # bluish green
+    "error": "#d55e00",        # vermillion
+    "context": "#cc79a7",      # reddish purple
+    "import": "#56b4e9",       # sky blue
+    "scope": "#a08c00",        # dark yellow
+    "simple": "#6b7280",       # grey
+}
+FILL = {
+    "definition": "#d2e4f2", "flow": "#fbe9c4", "loop": "#cdece2", "error": "#f7d9c6",
+    "context": "#f2dfeb", "import": "#dbeff9", "scope": "#f6efc3", "simple": "#eceff3",
 }
 EDGE = "#334155"
 RULE = "#cbd5e1"
 SELECT = "#1d4ed8"
 FLOW = "#374151"
-CALL = "#7c3aed"
-CALL_COLORS = ("#7c3aed", "#c026d3", "#0891b2")   # alternate by lane
+CALL = "#cc79a7"
+# Neighbouring call-line lanes differ in colour AND dash pattern, so they
+# stay apart without relying on hue.
+CALL_COLORS = ("#d55e00", "#cc79a7", "#009e73")
+CALL_DASHES = ((7, 4), (2, 4), (9, 3, 2, 3))
 BG = "#f8fafc"
-DROP = "#2563eb"
+DROP = "#0072b2"
 RADIUS = 6
-TITLE_FONT = ("Consolas", 10)
-TITLE_BOLD = ("Consolas", 10, "bold")
-DESC_FONT = ("Segoe UI", 8, "italic")
-LABEL_FONT = ("Segoe UI", 8)
-SLOT_FONT = ("Segoe UI", 7, "bold")
+TITLE_FONT = ("Consolas", 11)
+TITLE_BOLD = ("Consolas", 11, "bold")
+DESC_FONT = ("Segoe UI", 9, "italic")
+LABEL_FONT = ("Segoe UI", 9)
+SLOT_FONT = ("Segoe UI", 8, "bold")
 
 
 class CanvasView(tk.Frame):
@@ -46,8 +58,8 @@ class CanvasView(tk.Frame):
         self.show_calls = True
         self._drag: dict | None = None
         self._pan = False
-        self._bold = tkfont.Font(family="Consolas", size=10, weight="bold")
-        self._slot_font = tkfont.Font(family="Segoe UI", size=7, weight="bold")
+        self._bold = tkfont.Font(family="Consolas", size=11, weight="bold")
+        self._slot_font = tkfont.Font(family="Segoe UI", size=8, weight="bold")
 
         self.canvas = tk.Canvas(self, bg=BG, highlightthickness=0)
         ysb = tk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
@@ -415,7 +427,7 @@ class CanvasView(tk.Frame):
                 pts = [(x1, y1), (xg, y1), (xg, y2), (x2, y2)]
                 self._halo(pts)
                 self._arrow(pts, fill=CALL_COLORS[lane % len(CALL_COLORS)],
-                            dash=(6, 4), width=1.5)
+                            dash=CALL_DASHES[lane % len(CALL_DASHES)], width=1.8)
 
     # ----------------------------------------------------------------- mouse
     def _xy(self, event):

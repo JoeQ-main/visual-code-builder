@@ -6,26 +6,26 @@ import textwrap
 from . import model
 from .model import Block
 
-HEADER_H = 26
-DESC_H = 15
+HEADER_H = 29
+DESC_H = 17
 PAD = 8
 TEXT_X = 14          # text starts after the left spine / stripe
 SLOT_INDENT = 26     # children step in this far from the parent's left edge
 DEPTH_STEP = 14      # and their right end reaches this far past the parent's
-SLOT_LABEL_H = 18
+SLOT_LABEL_H = 20
 CHILD_GAP = 10
 SLOT_GAP = 4
 BOTTOM_PAD = 10
 EMPTY_SLOT_H = 24
 MIN_W = 150
-CHAR_W = 7.2
+CHAR_W = 8.2         # Consolas 11pt at 96 dpi
 MAX_TITLE_CHARS = 70
 STACK_X = 40
 STACK_Y = 40
 STACK_GAP = 36
 
 
-TITLE_LINE_H = 16
+TITLE_LINE_H = 18
 TOGGLE_W = 52       # room reserved at the right of the header for "more/less"
 
 
