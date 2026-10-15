@@ -160,7 +160,9 @@ def test_flow_lines_solid_and_calls_dashed(app):
     app.update()
     c = app.canvas.canvas
     lines = [i for i in c.find_all() if c.type(i) == "line"]
-    dashed_calls = [i for i in lines if c.itemcget(i, "dash") and c.itemcget(i, "fill") == "#7c3aed"]
+    from vcb.canvas import CALL_COLORS
+    dashed_calls = [i for i in lines
+                    if c.itemcget(i, "dash") and c.itemcget(i, "fill") in CALL_COLORS]
     solid = [i for i in lines if not c.itemcget(i, "dash")]
     assert len(dashed_calls) >= 6   # report, load_items, parse_line, Item, area, ...
     assert solid

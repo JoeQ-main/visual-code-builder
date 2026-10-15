@@ -148,3 +148,18 @@ def test_push_apart_resolves_overlaps_after_height_change():
     ys = [b.y for b in blocks]
     layout.push_apart(blocks)
     assert [b.y for b in blocks] == ys
+
+
+def test_assign_lanes_separates_overlapping_spans():
+    spans = [(10, 100), (50, 200), (150, 300), (400, 500), (90, 95)]
+    lanes = layout.assign_lanes(spans)
+    for i in range(len(spans)):
+        for j in range(i + 1, len(spans)):
+            a, b = sorted(spans[i]), sorted(spans[j])
+            overlap = not (a[1] + 4 < b[0] - 4 or b[1] + 4 < a[0] - 4)
+            if overlap:
+                assert lanes[i] != lanes[j], (spans[i], spans[j])
+    # disjoint spans share lane 0 and the packing stays compact
+    assert lanes[3] == 0 and max(lanes) <= 2
+    assert layout.assign_lanes([]) == []
+    assert layout.assign_lanes([(5, 1)]) == [0]

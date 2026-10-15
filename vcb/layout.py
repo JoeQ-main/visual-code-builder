@@ -127,8 +127,9 @@ def layout_all(blocks, show_desc: bool):
         place(b, b.x, b.y)
 
 
-COLUMN_GAP = 90
+COLUMN_GAP = 150     # room for the call-line channel between the columns
 DEFAULT_MAIN_W = 240
+LANE_W = 14          # spacing between parallel call lines in a gutter
 
 
 def column(block: Block) -> str:
@@ -179,6 +180,30 @@ def push_apart(blocks, skip: Block | None = None):
             if overlap_x and p.y <= b.y < p.y + p.h + CHILD_GAP:
                 b.y = p.y + p.h + STACK_GAP
         placed.append(b)
+
+
+def assign_lanes(spans, gap: float = 4.0) -> list[int]:
+    """Lane index for each (lo, hi) vertical span so that spans sharing a lane
+    never overlap (interval packing, lowest free lane first).
+
+    Lines that run side by side in a gutter get different lanes, so their
+    vertical segments never lie on top of each other.
+    """
+    order = sorted(range(len(spans)), key=lambda i: (min(spans[i]), max(spans[i])))
+    lanes: list[list[tuple[float, float]]] = []
+    result = [0] * len(spans)
+    for i in order:
+        lo, hi = sorted(spans[i])
+        lo, hi = lo - gap, hi + gap
+        for n, used in enumerate(lanes):
+            if all(hi < a or lo > b for a, b in used):
+                used.append((lo, hi))
+                result[i] = n
+                break
+        else:
+            lanes.append([(lo, hi)])
+            result[i] = len(lanes) - 1
+    return result
 
 
 def next_free_y(blocks, col: str | None = None) -> float:

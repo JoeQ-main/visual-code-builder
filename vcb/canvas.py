@@ -22,6 +22,8 @@ RULE = "#cbd5e1"
 SELECT = "#1d4ed8"
 FLOW = "#374151"
 CALL = "#7c3aed"
+CALL_COLORS = ("#7c3aed", "#c026d3", "#0891b2")   # alternate by lane
+BG = "#f8fafc"
 DROP = "#2563eb"
 RADIUS = 6
 TITLE_FONT = ("Consolas", 10)
@@ -47,7 +49,7 @@ class CanvasView(tk.Frame):
         self._bold = tkfont.Font(family="Consolas", size=10, weight="bold")
         self._slot_font = tkfont.Font(family="Segoe UI", size=7, weight="bold")
 
-        self.canvas = tk.Canvas(self, bg="#f8fafc", highlightthickness=0)
+        self.canvas = tk.Canvas(self, bg=BG, highlightthickness=0)
         ysb = tk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         xsb = tk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
         self.canvas.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
@@ -321,6 +323,7 @@ class CanvasView(tk.Frame):
         # Module execution: the main column in module order. Definitions are
         # only entered through calls, so they are not part of this chain.
         self._sequence([b for b in self.blocks if layout.column(b) == "main"])
+        jumps: dict[int, int] = {}   # continue/break lines already drawn per loop
         for b in model.walk(self.blocks):
             for slot in layout.visible_slots(b):
                 kids = b.slots.get(slot, [])
@@ -335,17 +338,27 @@ class CanvasView(tk.Frame):
                 self._sequence(kids)
             if layout.is_loop(b):
                 self._loop_back(b)
-            elif b.kind == "continue":
+            elif b.kind in ("continue", "break"):
                 loop = layout.enclosing_loop(b)
-                if loop is not None:
-                    self._jump_to_header(b, loop)
-            elif b.kind == "break":
-                loop = layout.enclosing_loop(b)
-                if loop is not None:
-                    x = loop.x - 9
-                    self._arrow([(b.x, b.y + 13), (x, b.y + 13),
-                                 (x, loop.y + loop.h + 5), (loop.x + 16, loop.y + loop.h + 5)],
-                                fill=FLOW, width=1.5)
+                if loop is None:
+                    continue
+                # each jump out of the same loop gets its own vertical, a
+                # little further left than the loop-back line
+                n = jumps.get(loop.id, 0) + 1
+                jumps[loop.id] = n
+                x = loop.x - 9 - 6 * n
+                if b.kind == "continue":
+                    pts = [(b.x, b.y + 13), (x, b.y + 13), (x, loop.y + 13 + 4 * n),
+                           (loop.x, loop.y + 13 + 4 * n)]
+                else:
+                    pts = [(b.x, b.y + 13), (x, b.y + 13), (x, loop.y + loop.h + 5),
+                           (loop.x + 16, loop.y + loop.h + 5)]
+                self._halo(pts)
+                self._arrow(pts, fill=FLOW, width=1.5)
+
+    def _halo(self, pts):
+        flat = [v for p in pts for v in p]
+        self.canvas.create_line(*flat, fill=BG, width=5)
 
     def _loop_back(self, loop: Block):
         """Solid arrow from the end of the body back to the loop header,
@@ -355,14 +368,10 @@ class CanvasView(tk.Frame):
             return
         last = body[-1]
         x = loop.x - 9
-        self._arrow([(last.x + 30, last.y + last.h), (last.x + 30, last.y + last.h + 5),
-                     (x, last.y + last.h + 5), (x, loop.y + 13), (loop.x, loop.y + 13)],
-                    fill=FLOW, width=1.5)
-
-    def _jump_to_header(self, src: Block, loop: Block):
-        x = loop.x - 9
-        self._arrow([(src.x, src.y + 13), (x, src.y + 13), (x, loop.y + 13),
-                     (loop.x, loop.y + 13)], fill=FLOW, width=1.5)
+        pts = [(last.x + 30, last.y + last.h), (last.x + 30, last.y + last.h + 5),
+               (x, last.y + last.h + 5), (x, loop.y + 13), (loop.x, loop.y + 13)]
+        self._halo(pts)
+        self._arrow(pts, fill=FLOW, width=1.5)
 
     def _draw_calls(self):
         """Dashed call lines, routed through gutters so they cross no blocks.
@@ -371,27 +380,42 @@ class CanvasView(tk.Frame):
         columns and enter the definition from the left. Calls made inside a
         definition run out to a gutter right of the definitions column and
         enter from the right.
+
+        Every line gets its own lane in the gutter, so no two vertical runs
+        coincide; lines leaving or entering the same block use separate rows
+        of its header; and each line is drawn over a background halo, so
+        where lines cross, the one on top visibly hops the other.
         """
         edges = model.call_edges(self.blocks)
         if not edges:
             return
         right_gutter = max(b.x + b.w for b in model.walk(self.blocks)) + 30
         channel = layout.defs_column_x(self.blocks) - 30
-        arrivals: dict[int, int] = {}   # lines already arriving at a block
-        for i, (src, dst) in enumerate(edges):
-            off = 6 * (i % 6)
-            # Several lines into one block get their own row in its header,
-            # otherwise their overlapping dashes merge into a solid line.
-            n = arrivals.get(dst.id, 0)
-            arrivals[dst.id] = n + 1
-            x1, y1, y2 = src.x + src.w, src.y + 13, dst.y + 8 + 5 * (n % 4)
-            if layout.column(layout.root_of(src)) == "main":
-                xc = channel - off
-                pts = [(x1, y1), (xc, y1), (xc, y2), (dst.x, y2)]
-            else:
-                xg = right_gutter + off
-                pts = [(x1, y1), (xg, y1), (xg, y2), (dst.x + dst.w, y2)]
-            self._arrow(pts, fill=CALL, dash=(6, 4), width=1.5)
+        leaving: dict[int, int] = {}
+        arriving: dict[int, int] = {}
+        items = []
+        for src, dst in edges:
+            k_out = leaving.get(src.id, 0)
+            leaving[src.id] = k_out + 1
+            k_in = arriving.get(dst.id, 0)
+            arriving[dst.id] = k_in + 1
+            y1 = src.y + 7 + 6 * (k_out % 3)
+            y2 = dst.y + 7 + 6 * (k_in % 3)
+            side = "channel" if layout.column(layout.root_of(src)) == "main" else "gutter"
+            items.append((src, dst, y1, y2, side))
+        for side in ("channel", "gutter"):
+            group = [it for it in items if it[4] == side]
+            lanes = layout.assign_lanes([(y1, y2) for _, _, y1, y2, _ in group])
+            for (src, dst, y1, y2, _), lane in zip(group, lanes):
+                x1 = src.x + src.w
+                if side == "channel":
+                    xg, x2 = channel - layout.LANE_W * lane, dst.x
+                else:
+                    xg, x2 = right_gutter + layout.LANE_W * lane, dst.x + dst.w
+                pts = [(x1, y1), (xg, y1), (xg, y2), (x2, y2)]
+                self._halo(pts)
+                self._arrow(pts, fill=CALL_COLORS[lane % len(CALL_COLORS)],
+                            dash=(6, 4), width=1.5)
 
     # ----------------------------------------------------------------- mouse
     def _xy(self, event):
