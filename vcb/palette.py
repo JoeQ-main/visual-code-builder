@@ -79,7 +79,7 @@ class ButtonPalette(ttk.Frame):
 def keyword_hint(entry: model.PaletteEntry) -> str:
     article = "an" if entry.kind[0] in "aeiou" else "a"
     hint = entry.note or f"Add {article} {entry.kind} block."
-    doc = model.block_doc(entry.kind)
+    doc = model.block_doc(entry.kind, entry.lang)
     return f"{hint}  {doc}" if doc else hint
 
 
@@ -89,27 +89,33 @@ def function_hint(entry: model.FunctionEntry) -> str:
 
 
 class PalettePanel(ButtonPalette):
-    """One button per reserved word, plus the other statement kinds."""
+    """One button per reserved word of the language, plus other statements."""
 
-    def __init__(self, master, on_pick, on_hint):
+    def __init__(self, master, lang: model.Language, on_pick, on_hint):
+        self.lang = lang
         super().__init__(
             master,
-            "Click a word to add its block. With a container selected, the block "
-            "goes inside it.",
-            [("Reserved words", model.PALETTE), ("Other statements", model.PALETTE_EXTRA)],
+            f"Click a {lang.label} word to add its block. With a container selected, "
+            "the block goes inside it.",
+            [("Reserved words", lang.palette), ("Other statements", lang.palette_extra)],
             on_pick, on_hint, keyword_hint)
 
 
 class FunctionPalette(ButtonPalette):
-    """The 30 most common built-in functions as ready-made blocks."""
+    """The 30 most common built-in functions of the language."""
 
-    def __init__(self, master, on_pick, on_hint):
+    def __init__(self, master, lang: model.Language, on_pick, on_hint):
+        self.lang = lang
         super().__init__(
             master,
-            "Click a function to add a block that calls it. Functions that return "
-            "a value get an assignment block; print gets a call block.",
-            [("Built-in functions", model.FUNCTIONS)],
+            f"Click a {lang.label} function to add a block that calls it. Functions "
+            "that return a value get a block that keeps the result.",
+            [("Built-in functions", lang.functions)],
             on_pick, on_hint, function_hint)
+
+
+def source_extensions() -> set[str]:
+    return {e for lang in model.LANGUAGES.values() for e in lang.extensions}
 
 
 class FileExplorer(ttk.Frame):
@@ -180,7 +186,7 @@ class FileExplorer(ttk.Frame):
                 if p.is_dir():
                     if not p.name.startswith("."):
                         self._add_node(node, p)
-                elif p.suffix.lower() in (".py", ".pyw", ".pyi"):
+                elif p.suffix.lower() in source_extensions():
                     self._add_node(node, p)
             except OSError:
                 continue

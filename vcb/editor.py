@@ -44,7 +44,7 @@ class EditorPanel(ttk.Frame):
         spec = block.spec
         ttk.Label(self._body, text=f"{block.kind} block",
                   font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        doc = model.block_doc(block.kind)
+        doc = model.block_doc(block.kind, block.lang)
         if doc:
             ttk.Label(self._body, text=doc, wraplength=WRAP, justify="left").pack(
                 anchor="w", pady=(2, 4))
@@ -56,7 +56,7 @@ class EditorPanel(ttk.Frame):
         form.columnconfigure(1, weight=1)
         row = 0
         for name, _default in spec.fields:
-            fdoc = model.field_doc(block.kind, name)
+            fdoc = model.field_doc(block.kind, name, block.lang)
             if name in CHECK_FIELDS:
                 var = tk.BooleanVar(value=bool(block.fields.get(name)))
                 cb = ttk.Checkbutton(form, text=name, variable=var,

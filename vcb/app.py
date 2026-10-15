@@ -6,6 +6,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from . import js  # noqa: F401 - registers the JavaScript language
 from . import layout, model
 from .canvas import CanvasView
 from .editor import EditorPanel
@@ -15,7 +16,6 @@ from .palette import FileExplorer, FunctionPalette, PalettePanel, single_column_
 APP_NAME = "Visual Code Builder"
 EDITOR_W = 330
 PREVIEW_W = 400
-SLOT_HOSTS = {"orelse": "if", "handlers": "try", "finalbody": "try", "cases": "match"}
 
 
 class App(tk.Tk):
@@ -25,6 +25,7 @@ class App(tk.Tk):
         self.geometry("1400x860")
         self.path: str | None = None
         self.modified = False
+        self.lang = "python"
         self._build_menu()
         self._build_panes()
         self._build_status()
@@ -38,6 +39,11 @@ class App(tk.Tk):
         code pane widths so later content changes never clip them."""
         self.update_idletasks()
         total = self._outer.winfo_width()
+        if total < EDITOR_W + PREVIEW_W + 300:
+            # The window is not laid out yet (or is tiny); try again shortly
+            # rather than clamping every sash to zero.
+            self.after(100, self._init_panes)
+            return
         self._outer.sashpos(2, total - PREVIEW_W)
         self._outer.sashpos(1, total - PREVIEW_W - EDITOR_W)
         chrome = max(0, self._left.winfo_width() - self.palette.winfo_width())
@@ -47,7 +53,10 @@ class App(tk.Tk):
     def _build_menu(self):
         menubar = tk.Menu(self)
         filem = tk.Menu(menubar, tearoff=0)
-        filem.add_command(label="New", accelerator="Ctrl+N", command=self.new_file)
+        filem.add_command(label="New Python file", accelerator="Ctrl+N",
+                          command=lambda: self.new_file("python"))
+        filem.add_command(label="New JavaScript file", accelerator="Ctrl+J",
+                          command=lambda: self.new_file("javascript"))
         filem.add_command(label="Open…", accelerator="Ctrl+O", command=self.open_file)
         filem.add_command(label="Save", accelerator="Ctrl+S", command=self.save_file)
         filem.add_command(label="Save As…", accelerator="Ctrl+Shift+S",
@@ -88,8 +97,10 @@ class App(tk.Tk):
 
         left = ttk.Notebook(outer, width=250)
         self._left = left
-        self.palette = PalettePanel(left, on_pick=self.pick_entry, on_hint=self.set_hint)
-        self.functions = FunctionPalette(left, on_pick=self.pick_function,
+        language = model.LANGUAGES[self.lang]
+        self.palette = PalettePanel(left, language, on_pick=self.pick_entry,
+                                    on_hint=self.set_hint)
+        self.functions = FunctionPalette(left, language, on_pick=self.pick_function,
                                          on_hint=self.set_hint)
         self.explorer = FileExplorer(left, on_open=self.open_file)
         left.add(self.palette, text="Blocks")
@@ -138,7 +149,8 @@ class App(tk.Tk):
         self.status.pack(fill="x", side="bottom")
 
     def _bind_keys(self):
-        self.bind_all("<Control-n>", lambda e: self.new_file())
+        self.bind_all("<Control-n>", lambda e: self.new_file("python"))
+        self.bind_all("<Control-j>", lambda e: self.new_file("javascript"))
         self.bind_all("<Control-o>", lambda e: self.open_file())
         self.bind_all("<Control-s>", lambda e: self.save_file())
         self.bind_all("<Control-S>", lambda e: self.save_file_as())
@@ -195,7 +207,7 @@ class App(tk.Tk):
         self._show_syntax(src)
 
     def _show_syntax(self, src: str) -> SyntaxError | None:
-        err = model.syntax_error(src)
+        err = model.syntax_error(src, self.lang)
         if err is None:
             self.syntax_label.configure(text="syntax OK", foreground="#15803d")
         else:
@@ -227,8 +239,9 @@ class App(tk.Tk):
                 messagebox.showerror(
                     APP_NAME, f"Cannot apply: syntax error on line {err.lineno}:\n{err.msg}")
             return False
-        blocks = model.parse_source(text)
-        self.canvas.set_blocks(blocks, keep_positions_from=self.canvas.blocks)
+        blocks = model.parse_source(text, self.lang)
+        self.canvas.set_blocks(blocks, keep_positions_from=self.canvas.blocks,
+                               lang=self.lang)
         self.modified = True
         self.refresh_preview()
         self.update_title()
@@ -250,10 +263,36 @@ class App(tk.Tk):
         if text:
             self.set_status(text)
 
+    def language(self) -> model.Language:
+        return model.LANGUAGES[self.lang]
+
     def update_title(self):
-        name = os.path.basename(self.path) if self.path else "untitled.py"
+        name = os.path.basename(self.path) if self.path else self._untitled_name()
         star = "*" if self.modified else ""
-        self.title(f"{name}{star} - {APP_NAME}")
+        self.title(f"{name}{star} - {self.language().label} - {APP_NAME}")
+
+    def _untitled_name(self) -> str:
+        return "untitled" + self.language().extensions[0]
+
+    def set_language(self, lang: str):
+        """Switch the editor to a language, rebuilding the palette tabs."""
+        if lang == self.lang and self.palette.lang.name == lang:
+            return
+        self.lang = lang
+        language = self.language()
+        current = self._left.index(self._left.select())
+        for old, tab, maker, attr in (
+                (self.palette, 0, PalettePanel, "palette"),
+                (self.functions, 1, FunctionPalette, "functions")):
+            self._left.forget(old)
+            old.destroy()
+            on_pick = self.pick_entry if attr == "palette" else self.pick_function
+            new = maker(self._left, language, on_pick=on_pick, on_hint=self.set_hint)
+            setattr(self, attr, new)
+            self._left.insert(tab, new, text="Blocks" if tab == 0 else "Functions")
+        self._left.select(current)
+        self.canvas.lang = lang
+        self.update_title()
 
     # -------------------------------------------------------------- palette
     def pick_entry(self, entry: PaletteEntry):
@@ -262,7 +301,7 @@ class App(tk.Tk):
         if entry.slot is not None:
             host = sel if sel is not None and entry.slot in sel.spec.slots else None
             if host is None:
-                host = model.new_block(SLOT_HOSTS[entry.slot])
+                host = model.new_block(self.language().slot_hosts[entry.slot], self.lang)
                 model.insert_block(host, entry.slot, block)
                 self.canvas.add_block(host)
                 self.canvas.select(block)
@@ -304,14 +343,11 @@ class App(tk.Tk):
                       if s not in model._REQUIRED_SLOTS and not block.slots.get(s)]
             if extras:
                 menu.add_separator()
+            fillers = self.language().slot_fillers
             for slot in extras:
-                label = model.SLOT_LABELS[slot]
-                if slot == "handlers":
-                    child = model.new_block("except")
-                elif slot == "cases":
-                    child = model.new_block("case")
-                else:
-                    child = None
+                label = model.slot_label(block, slot)
+                child = (model.new_block(fillers[slot], self.lang)
+                         if slot in fillers else None)
                 menu.add_command(
                     label=f"Add {label} slot",
                     command=lambda b=block, s=slot, c=child: self.canvas.fill_slot(b, s, c))
@@ -339,40 +375,54 @@ class App(tk.Tk):
             return self.save_file()
         return True
 
-    def new_file(self):
+    def _filetypes(self):
+        types = []
+        for lang in model.LANGUAGES.values():
+            types.append((f"{lang.label} files", " ".join("*" + e for e in lang.extensions)))
+        types.append(("All files", "*.*"))
+        return types
+
+    def new_file(self, lang: str | None = None):
         if not self.confirm_discard():
             return
+        lang = lang or self.lang
         self.path = None
-        self.canvas.set_blocks([])
+        self.set_language(lang)
+        self.canvas.set_blocks([], lang=lang)
         self.modified = False
         self.refresh_preview()
         self.update_title()
-        self.set_status("New file. Add blocks from the Blocks tab.")
+        self.set_status(f"New {self.language().label} file. Add blocks from the Blocks tab.")
 
     def open_file(self, path: str | None = None):
         if not self.confirm_discard():
             return
         if path is None:
-            path = filedialog.askopenfilename(
-                title="Open Python file",
-                filetypes=[("Python files", "*.py *.pyw *.pyi"), ("All files", "*.*")])
+            path = filedialog.askopenfilename(title="Open source file",
+                                              filetypes=self._filetypes())
             if not path:
                 return
+        lang = model.language_for_path(path) or self.lang
         try:
             src = Path(path).read_text(encoding="utf-8")
-            blocks = model.parse_source(src)
+            blocks = model.parse_source(src, lang)
         except SyntaxError as e:
             messagebox.showerror(APP_NAME, f"Cannot parse {path}:\nline {e.lineno}: {e.msg}")
+            return
+        except ImportError as e:
+            messagebox.showerror(APP_NAME, str(e))
             return
         except OSError as e:
             messagebox.showerror(APP_NAME, f"Cannot read {path}:\n{e}")
             return
         self.path = path
-        self.canvas.set_blocks(blocks)
+        self.set_language(lang)
+        self.canvas.set_blocks(blocks, lang=lang)
         self.modified = False
         self.refresh_preview()
         self.update_title()
-        self.set_status(f"Opened {path}  ({len(blocks)} top-level blocks)")
+        self.set_status(f"Opened {path}  ({self.language().label}, "
+                        f"{len(blocks)} top-level blocks)")
 
     def save_file(self) -> bool:
         if self.path is None:
@@ -380,17 +430,18 @@ class App(tk.Tk):
         return self._write(self.path)
 
     def save_file_as(self) -> bool:
+        ext = self.language().extensions[0]
         path = filedialog.asksaveasfilename(
-            title="Save Python file", defaultextension=".py",
-            initialfile=os.path.basename(self.path) if self.path else "untitled.py",
-            filetypes=[("Python files", "*.py"), ("All files", "*.*")])
+            title=f"Save {self.language().label} file", defaultextension=ext,
+            initialfile=os.path.basename(self.path) if self.path else self._untitled_name(),
+            filetypes=self._filetypes())
         if not path:
             return False
         return self._write(path)
 
     def _write(self, path: str) -> bool:
         src = self.canvas.source()
-        err = model.syntax_error(src)
+        err = model.syntax_error(src, self.lang)
         if err is not None:
             if not messagebox.askyesno(
                     APP_NAME, f"The generated code has a syntax error on line "
@@ -413,9 +464,13 @@ class App(tk.Tk):
 
     def show_help(self):
         messagebox.showinfo(APP_NAME, (
+            "Python and JavaScript files are supported. The language follows the "
+            "file extension when you open a file; File > New picks it for a new "
+            "file, and the Blocks and Functions tabs change with it.\n\n"
             "Blocks tab: click a reserved word to add its block. If a container "
             "block is selected the new block goes inside it.\n\n"
-            "Files tab: browse folders and double-click a .py file to open it.\n\n"
+            "Files tab: browse folders and double-click a .py or .js file to open "
+            "it.\n\n"
             "Canvas: click to select, drag to move. Drop a block inside another "
             "block's slot to nest it; drop it on empty canvas to make it top level. "
             "Moving a block moves everything nested in it. Drag empty canvas to pan. "

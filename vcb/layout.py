@@ -112,24 +112,11 @@ def place(block: Block, x: float, y: float, width: float | None = None):
         cy += SLOT_GAP
 
 
-KEYWORD_KINDS = {
-    "def", "class", "if", "elif", "for", "while", "try", "except", "with", "match",
-    "case", "return", "raise", "assert", "import", "from", "global", "nonlocal",
-    "del", "type", "pass", "break", "continue",
-}
-
-
 def title_parts(block: Block) -> tuple[str, str]:
     """(keyword, rest) of the first header line, so the keyword can be bold."""
     first = title_lines(block)[0]
-    if block.kind not in KEYWORD_KINDS:
-        return "", first
-    kw = block.kind
-    if block.kind == "try" and block.fields.get("star"):
-        kw = "try*"
-    if block.fields.get("async"):
-        kw = "async " + kw
-    if first.startswith(kw):
+    kw = model.LANGUAGES[block.lang].keyword(block)
+    if kw and first.startswith(kw):
         return kw, first[len(kw):]
     return "", first
 
@@ -146,7 +133,7 @@ DEFAULT_MAIN_W = 240
 
 def column(block: Block) -> str:
     """'defs' for functions and classes, 'main' for the program flow."""
-    return "defs" if block.kind in ("def", "class") else "main"
+    return "defs" if block.kind in model.LANGUAGES[block.lang].def_kinds else "main"
 
 
 def defs_column_x(blocks) -> float:
@@ -207,13 +194,18 @@ def root_of(block: Block) -> Block:
 
 def terminates(block: Block) -> bool:
     """True when control never continues to the next sibling."""
-    return block.kind in ("return", "raise", "break", "continue")
+    return block.kind in model.LANGUAGES[block.lang].terminators
+
+
+def is_loop(block: Block) -> bool:
+    return block.kind in model.LANGUAGES[block.lang].loop_kinds
 
 
 def enclosing_loop(block: Block) -> Block | None:
+    lang = model.LANGUAGES[block.lang]
     cur = block.parent
-    while cur is not None and cur.kind not in ("def", "class"):
-        if cur.kind in ("for", "while") and block is not cur:
+    while cur is not None and cur.kind not in lang.def_kinds:
+        if cur.kind in lang.loop_kinds and block is not cur:
             return cur
         cur = cur.parent
     return None

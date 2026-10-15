@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import itertools
 from dataclasses import dataclass, field
+from typing import Any, Callable
 
 _ids = itertools.count(1)
 INDENT = "    "
@@ -74,6 +75,50 @@ SPECS: dict[str, BlockSpec] = {s.kind: s for s in [
     _spec("type", "definition", [("name", "Alias"), ("typeparams", ""), ("value", "int")]),
 ]}
 
+@dataclass
+class Language:
+    """Everything the editor needs to know about one programming language."""
+    name: str
+    label: str
+    extensions: tuple[str, ...]
+    specs: dict[str, BlockSpec]
+    docs: dict[str, tuple[str, dict[str, str]]]
+    palette: list
+    palette_extra: list
+    functions: list
+    slot_hosts: dict[str, str]        # slot -> container kind that owns it
+    slot_fillers: dict[str, str]      # slot -> block kind that belongs in it
+    placeholder_kind: str             # a do-nothing statement kind
+    def_kinds: frozenset
+    loop_kinds: frozenset
+    terminators: frozenset
+    parse: Callable[[str], list]
+    generate: Callable[[list, dict], str]
+    syntax_error: Callable[[str], SyntaxError | None]
+    title: Callable[[Any], str]
+    keyword: Callable[[Any], str]
+    describe_io: Callable[[Any], tuple[str, str]]
+    called_names: Callable[[Any], list[str]]
+    function_block: Callable[[Any], Any]
+    note: str = ""
+    slot_labels: dict = field(default_factory=dict)   # overrides of SLOT_LABELS
+
+
+def slot_label(block: "Block", slot: str) -> str:
+    return LANGUAGES[block.lang].slot_labels.get(slot, SLOT_LABELS[slot])
+
+
+LANGUAGES: dict[str, Language] = {}
+
+
+def language_for_path(path: str) -> str | None:
+    ext = ("." + path.rsplit(".", 1)[-1].lower()) if "." in path else ""
+    for lang in LANGUAGES.values():
+        if ext in lang.extensions:
+            return lang.name
+    return None
+
+
 SLOT_LABELS = {
     "body": "body", "orelse": "else", "handlers": "except",
     "finalbody": "finally", "cases": "cases",
@@ -93,6 +138,7 @@ class Block:
     slots: dict[str, list["Block"]] = field(default_factory=dict)
     desc_in: str = ""
     desc_out: str = ""
+    lang: str = "python"
     expanded: bool = False      # show the full text of a long block
     x: float = 0.0
     y: float = 0.0
@@ -107,7 +153,7 @@ class Block:
 
     @property
     def spec(self) -> BlockSpec:
-        return SPECS[self.kind]
+        return LANGUAGES[self.lang].specs[self.kind]
 
     def children(self):
         for name in self.spec.slots:
@@ -115,67 +161,71 @@ class Block:
 
     def title(self) -> str:
         """Short one-line header text for the block."""
-        f = self.fields
-        k = self.kind
-        pre = (f.get("async", "") + " ").lstrip() if f.get("async") else ""
-        if k == "def":
-            ret = f" -> {f['returns']}" if f.get("returns") else ""
-            return f"{pre}def {f['name']}({f['args']}){ret}"
-        if k == "class":
-            bases = f"({f['bases']})" if f.get("bases") else ""
-            return f"class {f['name']}{bases}"
-        if k in ("if", "elif", "while"):
-            return f"{k} {f['test']}"
-        if k == "for":
-            return f"{pre}for {f['target']} in {f['iter']}"
-        if k == "try":
-            return "try" + ("*" if f.get("star") else "")
-        if k == "except":
-            name = f" as {f['name']}" if f.get("name") else ""
-            return f"except {f['type']}{name}".rstrip()
-        if k == "with":
-            return f"{pre}with {f['items']}"
-        if k == "match":
-            return f"match {f['subject']}"
-        if k == "case":
-            guard = f" if {f['guard']}" if f.get("guard") else ""
-            return f"case {f['pattern']}{guard}"
-        if k == "return":
-            return f"return {f['value']}".rstrip()
-        if k == "raise":
-            cause = f" from {f['cause']}" if f.get("cause") else ""
-            return f"raise {f['exc']}{cause}".rstrip()
-        if k == "assert":
-            msg = f", {f['msg']}" if f.get("msg") else ""
-            return f"assert {f['test']}{msg}"
-        if k == "import":
-            return f"import {f['names']}"
-        if k == "from":
-            return f"from {f['module']} import {f['names']}"
-        if k in ("global", "nonlocal"):
-            return f"{k} {f['names']}"
-        if k == "del":
-            return f"del {f['targets']}"
-        if k == "type":
-            tp = f"[{f['typeparams']}]" if f.get("typeparams") else ""
-            return f"type {f['name']}{tp} = {f['value']}"
-        if k == "assign":
-            return f"{f['targets']} = {f['value']}"
-        if k == "augassign":
-            return f"{f['target']} {f['op']}= {f['value']}"
-        if k == "annassign":
-            val = f" = {f['value']}" if f.get("value") else ""
-            return f"{f['target']}: {f['annotation']}{val}"
-        if k in ("call", "expr"):
-            return f["value"]
-        return k
+        return LANGUAGES[self.lang].title(self)
 
 
-def new_block(kind: str, **overrides: str) -> Block:
-    spec = SPECS[kind]
+def _py_title(self: Block) -> str:  # noqa: C901 - one branch per kind
+    f = self.fields
+    k = self.kind
+    pre = (f.get("async", "") + " ").lstrip() if f.get("async") else ""
+    if k == "def":
+        ret = f" -> {f['returns']}" if f.get("returns") else ""
+        return f"{pre}def {f['name']}({f['args']}){ret}"
+    if k == "class":
+        bases = f"({f['bases']})" if f.get("bases") else ""
+        return f"class {f['name']}{bases}"
+    if k in ("if", "elif", "while"):
+        return f"{k} {f['test']}"
+    if k == "for":
+        return f"{pre}for {f['target']} in {f['iter']}"
+    if k == "try":
+        return "try" + ("*" if f.get("star") else "")
+    if k == "except":
+        name = f" as {f['name']}" if f.get("name") else ""
+        return f"except {f['type']}{name}".rstrip()
+    if k == "with":
+        return f"{pre}with {f['items']}"
+    if k == "match":
+        return f"match {f['subject']}"
+    if k == "case":
+        guard = f" if {f['guard']}" if f.get("guard") else ""
+        return f"case {f['pattern']}{guard}"
+    if k == "return":
+        return f"return {f['value']}".rstrip()
+    if k == "raise":
+        cause = f" from {f['cause']}" if f.get("cause") else ""
+        return f"raise {f['exc']}{cause}".rstrip()
+    if k == "assert":
+        msg = f", {f['msg']}" if f.get("msg") else ""
+        return f"assert {f['test']}{msg}"
+    if k == "import":
+        return f"import {f['names']}"
+    if k == "from":
+        return f"from {f['module']} import {f['names']}"
+    if k in ("global", "nonlocal"):
+        return f"{k} {f['names']}"
+    if k == "del":
+        return f"del {f['targets']}"
+    if k == "type":
+        tp = f"[{f['typeparams']}]" if f.get("typeparams") else ""
+        return f"type {f['name']}{tp} = {f['value']}"
+    if k == "assign":
+        return f"{f['targets']} = {f['value']}"
+    if k == "augassign":
+        return f"{f['target']} {f['op']}= {f['value']}"
+    if k == "annassign":
+        val = f" = {f['value']}" if f.get("value") else ""
+        return f"{f['target']}: {f['annotation']}{val}"
+    if k in ("call", "expr"):
+        return f["value"]
+    return k
+
+
+def new_block(kind: str, lang: str = "python", **overrides: str) -> Block:
+    spec = LANGUAGES[lang].specs[kind]
     fields = {name: default for name, default in spec.fields}
     fields.update(overrides)
-    return Block(kind, fields=fields, slots={s: [] for s in spec.slots})
+    return Block(kind, fields=fields, slots={s: [] for s in spec.slots}, lang=lang)
 
 
 def walk(blocks):
@@ -224,7 +274,7 @@ def clone_block(block: Block) -> Block:
     """Deep copy of a block and its children with fresh ids and no parent."""
     copy = Block(block.kind, fields=dict(block.fields),
                  desc_in=block.desc_in, desc_out=block.desc_out,
-                 x=block.x, y=block.y)
+                 lang=block.lang, expanded=block.expanded, x=block.x, y=block.y)
     copy.slots = {s: [] for s in block.spec.slots}
     for name in block.spec.slots:
         for child in block.slots.get(name, []):
@@ -242,7 +292,11 @@ _AUG_OPS = {
 }
 
 
-def parse_source(src: str) -> list[Block]:
+def parse_source(src: str, lang: str = "python") -> list[Block]:
+    return LANGUAGES[lang].parse(src)
+
+
+def _py_parse_source(src: str) -> list[Block]:
     tree = ast.parse(src)
     return [_stmt_to_block(node) for node in tree.body]
 
@@ -371,12 +425,20 @@ def _stmt_to_block(node: ast.stmt) -> Block:  # noqa: C901 - one branch per kind
 # --------------------------------------------------------------------------
 # Generation: blocks -> source
 # --------------------------------------------------------------------------
-def generate_source(blocks, spans: dict[int, tuple[int, int]] | None = None) -> str:
-    """Source text for the blocks.
+def generate_source(blocks, spans: dict[int, tuple[int, int]] | None = None,
+                    lang: str | None = None) -> str:
+    """Source text for the blocks, in their language.
 
     When ``spans`` is given it is filled with ``block.id -> (first, last)``
     line numbers, 1-based and inclusive, for every emitted block.
     """
+    blocks = list(blocks)
+    if lang is None:
+        lang = blocks[0].lang if blocks else "python"
+    return LANGUAGES[lang].generate(blocks, spans if spans is not None else {})
+
+
+def _py_generate_source(blocks, spans: dict[int, tuple[int, int]] | None = None) -> str:
     lines: list[str] = []
     spans = spans if spans is not None else {}
     prev: Block | None = None
@@ -392,7 +454,11 @@ def generate_source(blocks, spans: dict[int, tuple[int, int]] | None = None) -> 
     return "\n".join(lines) + "\n"
 
 
-def syntax_error(src: str) -> SyntaxError | None:
+def syntax_error(src: str, lang: str = "python") -> SyntaxError | None:
+    return LANGUAGES[lang].syntax_error(src)
+
+
+def _py_syntax_error(src: str) -> SyntaxError | None:
     try:
         ast.parse(src)
     except SyntaxError as e:
@@ -603,7 +669,7 @@ def shallow_source(block: Block) -> str:
     saved = block.slots
     block.slots = {s: [] for s in block.spec.slots}
     try:
-        return generate_source([block])
+        return generate_source([block], lang=block.lang)
     finally:
         block.slots = saved
 
@@ -616,28 +682,35 @@ def _shallow_tree(block: Block) -> ast.AST | None:
 
 
 def call_edges(blocks) -> list[tuple[Block, Block]]:
-    """(caller block, def/class block) pairs for every call of a defined name."""
+    """(caller block, definition block) pairs for every call of a defined name."""
     defs: dict[str, Block] = {}
     for b in walk(blocks):
-        if b.kind in ("def", "class"):
+        if b.kind in LANGUAGES[b.lang].def_kinds and b.fields.get("name"):
             defs.setdefault(b.fields["name"], b)
     edges: list[tuple[Block, Block]] = []
     seen = set()
     for b in walk(blocks):
-        tree = _shallow_tree(b)
-        if tree is None:
-            continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = func.id if isinstance(func, ast.Name) else (
-                func.attr if isinstance(func, ast.Attribute) else None)
+        for name in LANGUAGES[b.lang].called_names(b):
             target = defs.get(name)
             if target is not None and (b.id, target.id) not in seen:
                 seen.add((b.id, target.id))
                 edges.append((b, target))
     return edges
+
+
+def _py_called_names(block: Block) -> list[str]:
+    tree = _shallow_tree(block)
+    if tree is None:
+        return []
+    names = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else (
+                func.attr if isinstance(func, ast.Attribute) else None)
+            if name:
+                names.append(name)
+    return names
 
 
 def _names_in(text: str) -> list[str]:
@@ -685,8 +758,12 @@ def _bound_names_in_pattern(text: str) -> list[str]:
     return out
 
 
-def describe_io(block: Block) -> tuple[str, str]:  # noqa: C901
+def describe_io(block: Block) -> tuple[str, str]:
     """Automatic (inputs, outputs) descriptions for a block."""
+    return LANGUAGES[block.lang].describe_io(block)
+
+
+def _py_describe_io(block: Block) -> tuple[str, str]:  # noqa: C901
     f = block.fields
     k = block.kind
     j = ", ".join
@@ -763,6 +840,7 @@ class PaletteEntry:
     fields: tuple[tuple[str, str], ...] = ()
     slot: str | None = None      # adds to this slot of the selected container
     note: str = ""
+    lang: str = "python"
 
 
 def _pe(word, kind, fields=(), slot=None, note=""):
@@ -820,7 +898,7 @@ PALETTE_EXTRA: list[PaletteEntry] = [
 
 
 def block_from_entry(entry: PaletteEntry) -> Block:
-    return new_block(entry.kind, **dict(entry.fields))
+    return new_block(entry.kind, entry.lang, **dict(entry.fields))
 
 
 # --------------------------------------------------------------------------
@@ -923,12 +1001,12 @@ DOCS: dict[str, tuple[str, dict[str, str]]] = {
 }
 
 
-def block_doc(kind: str) -> str:
-    return DOCS.get(kind, ("", {}))[0]
+def block_doc(kind: str, lang: str = "python") -> str:
+    return LANGUAGES[lang].docs.get(kind, ("", {}))[0]
 
 
-def field_doc(kind: str, name: str) -> str:
-    return DOCS.get(kind, ("", {}))[1].get(name, "")
+def field_doc(kind: str, name: str, lang: str = "python") -> str:
+    return LANGUAGES[lang].docs.get(kind, ("", {}))[1].get(name, "")
 
 
 # --------------------------------------------------------------------------
@@ -943,6 +1021,7 @@ class FunctionEntry:
     doc: str
     inputs: str
     outputs: str
+    lang: str = "python"
 
 
 def _fn(word, params, template, result, doc, inputs, outputs):
@@ -1035,8 +1114,14 @@ FUNCTIONS: list[FunctionEntry] = [
 
 
 def block_from_function(entry: FunctionEntry) -> Block:
+    """A block calling the function, in the entry's language, with the
+    input/output descriptions filled in."""
+    return LANGUAGES[entry.lang].function_block(entry)
+
+
+def _py_function_block(entry: FunctionEntry) -> Block:
     """A call block for a function used for its effect, otherwise an
-    assignment that keeps the result, with descriptions filled in."""
+    assignment that keeps the result."""
     if entry.result:
         block = new_block("assign", targets=entry.result, value=entry.template)
     else:
@@ -1044,3 +1129,40 @@ def block_from_function(entry: FunctionEntry) -> Block:
     block.desc_in = entry.inputs
     block.desc_out = entry.outputs
     return block
+
+
+_PY_KEYWORD_KINDS = {
+    "def", "class", "if", "elif", "for", "while", "try", "except", "with", "match",
+    "case", "return", "raise", "assert", "import", "from", "global", "nonlocal",
+    "del", "type", "pass", "break", "continue",
+}
+
+
+def _py_keyword(block: Block) -> str:
+    """The leading keyword of a block's header, or '' when it has none."""
+    if block.kind not in _PY_KEYWORD_KINDS:
+        return ""
+    kw = block.kind
+    if block.kind == "try" and block.fields.get("star"):
+        kw = "try*"
+    if block.fields.get("async"):
+        kw = "async " + kw
+    return kw
+
+
+PYTHON = Language(
+    name="python", label="Python", extensions=(".py", ".pyw", ".pyi"),
+    specs=SPECS, docs=DOCS, palette=PALETTE, palette_extra=PALETTE_EXTRA,
+    functions=FUNCTIONS,
+    slot_hosts={"orelse": "if", "handlers": "try", "finalbody": "try", "cases": "match"},
+    slot_fillers={"handlers": "except", "cases": "case"},
+    placeholder_kind="pass",
+    def_kinds=frozenset({"def", "class"}),
+    loop_kinds=frozenset({"for", "while"}),
+    terminators=frozenset({"return", "raise", "break", "continue"}),
+    parse=_py_parse_source, generate=_py_generate_source, syntax_error=_py_syntax_error,
+    title=_py_title, keyword=_py_keyword, describe_io=_py_describe_io,
+    called_names=_py_called_names, function_block=_py_function_block,
+    note="Comments and blank lines are not kept when a file is re-generated.",
+)
+LANGUAGES[PYTHON.name] = PYTHON

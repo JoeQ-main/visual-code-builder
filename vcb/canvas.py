@@ -38,6 +38,7 @@ class CanvasView(tk.Frame):
         self.on_change = on_change
         self.on_context = on_context
         self.blocks: list[Block] = []
+        self.lang = "python"
         self.selected: Block | None = None
         self.show_desc = False
         self.show_calls = True
@@ -67,11 +68,15 @@ class CanvasView(tk.Frame):
         c.bind("<Configure>", lambda e: self._update_scrollregion())
 
     # ------------------------------------------------------------------ data
-    def set_blocks(self, blocks: list[Block], keep_positions_from=None):
+    def set_blocks(self, blocks: list[Block], keep_positions_from=None, lang=None):
         """Replace all blocks. With ``keep_positions_from`` (the previous
         top-level blocks), blocks whose kind and title match keep their old
         position and expanded state; everything is re-arranged otherwise."""
         self.blocks = list(blocks)
+        if lang is not None:
+            self.lang = lang
+        elif self.blocks:
+            self.lang = self.blocks[0].lang
         self.selected = None
         old = {(b.kind, b.title()): b for b in (keep_positions_from or [])}
         matched = []
@@ -91,12 +96,12 @@ class CanvasView(tk.Frame):
 
     def source(self) -> str:
         """Module order is the block list, not the canvas position."""
-        return model.generate_source(self.blocks)
+        return model.generate_source(self.blocks, lang=self.lang)
 
     def source_with_spans(self) -> tuple[str, dict[int, tuple[int, int]]]:
         """Source plus ``block.id -> (first line, last line)`` for every block."""
         spans: dict[int, tuple[int, int]] = {}
-        return model.generate_source(self.blocks, spans), spans
+        return model.generate_source(self.blocks, spans, lang=self.lang), spans
 
     def place_top_level(self, block: Block):
         """Insert a top-level block into the module order by its position.
@@ -169,8 +174,9 @@ class CanvasView(tk.Frame):
             self._changed()
 
     def fill_slot(self, block: Block, slot: str, child: Block | None = None):
-        """Make a slot visible by giving it a block (default: pass)."""
-        child = child or model.new_block("pass")
+        """Make a slot visible by giving it a block (default: a placeholder)."""
+        child = child or model.new_block(model.LANGUAGES[self.lang].placeholder_kind,
+                                         self.lang)
         model.insert_block(block, slot, child)
         self.select(child)
         self._changed()
@@ -272,7 +278,7 @@ class CanvasView(tk.Frame):
         # Slots: a small caps label and a rule across the section start.
         for slot in layout.visible_slots(b):
             sx1, sy1, sx2, sy2 = b.slot_rects[slot]
-            label = model.SLOT_LABELS[slot].upper()
+            label = model.slot_label(b, slot).upper()
             ly = sy1 + layout.SLOT_LABEL_H / 2
             c.create_text(x1 + 12, ly, text=label, anchor="w", font=SLOT_FONT,
                           fill="#475569")
@@ -327,7 +333,7 @@ class CanvasView(tk.Frame):
                              (x, first.y + 12), (first.x, first.y + 12)],
                             fill=FLOW, width=1.5, **style)
                 self._sequence(kids)
-            if b.kind in ("for", "while"):
+            if layout.is_loop(b):
                 self._loop_back(b)
             elif b.kind == "continue":
                 loop = layout.enclosing_loop(b)
@@ -371,9 +377,14 @@ class CanvasView(tk.Frame):
             return
         right_gutter = max(b.x + b.w for b in model.walk(self.blocks)) + 30
         channel = layout.defs_column_x(self.blocks) - 30
+        arrivals: dict[int, int] = {}   # lines already arriving at a block
         for i, (src, dst) in enumerate(edges):
             off = 6 * (i % 6)
-            x1, y1, y2 = src.x + src.w, src.y + 13, dst.y + 13
+            # Several lines into one block get their own row in its header,
+            # otherwise their overlapping dashes merge into a solid line.
+            n = arrivals.get(dst.id, 0)
+            arrivals[dst.id] = n + 1
+            x1, y1, y2 = src.x + src.w, src.y + 13, dst.y + 8 + 5 * (n % 4)
             if layout.column(layout.root_of(src)) == "main":
                 xc = channel - off
                 pts = [(x1, y1), (xc, y1), (xc, y2), (dst.x, y2)]
