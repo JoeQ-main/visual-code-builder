@@ -203,7 +203,7 @@ def test_palette_hint_uses_correct_article(app):
     grid, buttons = app.palette._grids[1]
     buttons[1].event_generate("<Enter>")
     buttons[1].event_generate("<Leave>")
-    assert any(h.startswith("Add an assign block.") for h in hints)
+    assert any("Add an assign block." in h for h in hints)
 
 
 def test_selecting_a_block_highlights_its_code(app):
@@ -304,3 +304,28 @@ def test_tab_moves_focus_instead_of_inserting(app):
     result = app._focus_next(SimpleNamespace(widget=app.code))
     assert result == "break"
     assert app.code.get("1.0", "end") == before
+
+
+def test_palette_buttons_show_tooltips(app):
+    grid, buttons = app.palette._grids[0]
+    from vcb.palette import keyword_hint
+    tip = app.palette.tooltip
+    btn = buttons[0]
+    tip.hide()
+    tip.show(btn, keyword_hint(model.PALETTE[0]))
+    assert tip.visible
+    win = tip._window
+    label = win.winfo_children()[0]
+    assert "False" in label.cget("text")
+    tip.hide()
+    assert not tip.visible
+    # the real hover path: Enter schedules, Leave cancels before it shows
+    btn.event_generate("<Enter>")
+    assert tip._after is not None
+    btn.event_generate("<Leave>")
+    assert tip._after is None and not tip.visible
+    # function tooltips explain inputs and outputs
+    fgrid, fbuttons = app.functions._grids[0]
+    from vcb.palette import function_hint
+    text = function_hint(model.FUNCTIONS[2])
+    assert text.startswith("len(obj)") and "in: " in text and "out: " in text

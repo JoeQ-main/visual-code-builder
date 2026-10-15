@@ -22,6 +22,76 @@ def single_column_width() -> int:
     return GRID_MARGIN + 2 * BUTTON_MIN_W - 1
 
 
+class Tooltip:
+    """A small text window shown next to a widget after a short hover.
+
+    One tooltip per palette; each button binds Enter/Leave to it with its
+    own text, so hovering a button explains what that word or function does.
+    """
+
+    DELAY_MS = 400
+
+    def __init__(self, master, wraplength: int = 320):
+        self.master = master
+        self.wraplength = wraplength
+        self._window: tk.Toplevel | None = None
+        self._after: str | None = None
+        self.text = ""
+
+    def attach(self, widget, text: str):
+        widget.bind("<Enter>", lambda e, t=text, w=widget: self.schedule(w, t), add="+")
+        widget.bind("<Leave>", lambda e: self.hide(), add="+")
+        widget.bind("<ButtonPress>", lambda e: self.hide(), add="+")
+
+    def schedule(self, widget, text: str):
+        self.hide()
+        self.text = text
+        self._after = self.master.after(self.DELAY_MS, lambda: self.show(widget, text))
+
+    def show(self, widget, text: str):
+        self._after = None
+        if self._window is not None or not text:
+            return
+        try:
+            x = widget.winfo_rootx() + widget.winfo_width() + 6
+            y = widget.winfo_rooty() + 2
+        except tk.TclError:   # widget destroyed meanwhile
+            return
+        win = tk.Toplevel(widget)
+        win.wm_overrideredirect(True)
+        try:
+            win.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        label = tk.Label(win, text=text, justify="left", wraplength=self.wraplength,
+                         background="#fffbeb", foreground="#1f2937",
+                         relief="solid", borderwidth=1, padx=8, pady=5,
+                         font=("Segoe UI", 9))
+        label.pack()
+        win.update_idletasks()
+        # keep the tip on screen: flip to the left or move up if needed
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        if x + w > sw:
+            x = max(0, widget.winfo_rootx() - w - 6)
+        if y + h > sh:
+            y = max(0, sh - h - 4)
+        win.wm_geometry(f"+{x}+{y}")
+        self._window = win
+
+    def hide(self):
+        if self._after is not None:
+            self.master.after_cancel(self._after)
+            self._after = None
+        if self._window is not None:
+            self._window.destroy()
+            self._window = None
+
+    @property
+    def visible(self) -> bool:
+        return self._window is not None
+
+
 class ButtonPalette(ttk.Frame):
     """A grid of buttons that add blocks when clicked.
 
@@ -35,6 +105,7 @@ class ButtonPalette(ttk.Frame):
         self.on_pick = on_pick
         self.on_hint = on_hint
         self.hint_for = hint_for
+        self.tooltip = Tooltip(self)
         self._cols = 0
         self._grids: list[tuple[ttk.Frame, list[ttk.Button]]] = []
         self._intro = ttk.Label(self, text=intro, wraplength=200, justify="left",
@@ -57,6 +128,7 @@ class ButtonPalette(ttk.Frame):
             hint = self.hint_for(entry)
             btn.bind("<Enter>", lambda e, h=hint: self.on_hint(h))
             btn.bind("<Leave>", lambda e: self.on_hint(""))
+            self.tooltip.attach(btn, hint)
             buttons.append(btn)
         self._grids.append((grid, buttons))
 
@@ -80,12 +152,13 @@ def keyword_hint(entry: model.PaletteEntry) -> str:
     article = "an" if entry.kind[0] in "aeiou" else "a"
     hint = entry.note or f"Add {article} {entry.kind} block."
     doc = model.block_doc(entry.kind, entry.lang)
-    return f"{hint}  {doc}" if doc else hint
+    return f"{entry.word}: {doc}\n\n{hint}" if doc else f"{entry.word}: {hint}"
 
 
 def function_hint(entry: model.FunctionEntry) -> str:
     result = f" → {entry.result}" if entry.result else ""
-    return f"{entry.word}({entry.params}){result}: {entry.doc}"
+    return (f"{entry.word}({entry.params}){result}\n{entry.doc}\n\n"
+            f"in: {entry.inputs}\nout: {entry.outputs}")
 
 
 class PalettePanel(ButtonPalette):
