@@ -10,6 +10,16 @@ from . import model
 
 BUTTON_MIN_W = 78   # pixels per column before the grid reflows
 MAX_COLUMNS = 12
+GRID_MARGIN = 12
+
+
+def columns_for_width(width: int) -> int:
+    return max(1, min(MAX_COLUMNS, (width - GRID_MARGIN) // BUTTON_MIN_W))
+
+
+def single_column_width() -> int:
+    """The widest panel width that still lays the buttons out in one column."""
+    return GRID_MARGIN + 2 * BUTTON_MIN_W - 1
 
 
 class PalettePanel(ttk.Frame):
@@ -45,6 +55,9 @@ class PalettePanel(ttk.Frame):
                              command=lambda e=entry: self.on_pick(e))
             article = "an" if entry.kind[0] in "aeiou" else "a"
             hint = entry.note or f"Add {article} {entry.kind} block."
+            doc = model.block_doc(entry.kind)
+            if doc:
+                hint = f"{hint}  {doc}"
             btn.bind("<Enter>", lambda e, h=hint: self.on_hint(h))
             btn.bind("<Leave>", lambda e: self.on_hint(""))
             buttons.append(btn)
@@ -53,7 +66,7 @@ class PalettePanel(ttk.Frame):
     def _on_resize(self, event):
         width = event.width
         self._intro.configure(wraplength=max(80, width - 16))
-        self._reflow(max(1, min(MAX_COLUMNS, (width - 12) // BUTTON_MIN_W)))
+        self._reflow(columns_for_width(width))
 
     def _reflow(self, cols: int):
         if cols == self._cols:

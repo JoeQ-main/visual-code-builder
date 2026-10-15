@@ -8,6 +8,7 @@ from . import model
 from .model import Block
 
 CHECK_FIELDS = {"async": "async", "star": "*"}
+WRAP = 270
 
 
 class EditorPanel(ttk.Frame):
@@ -43,28 +44,39 @@ class EditorPanel(ttk.Frame):
         spec = block.spec
         ttk.Label(self._body, text=f"{block.kind} block",
                   font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        doc = model.block_doc(block.kind)
+        if doc:
+            ttk.Label(self._body, text=doc, wraplength=WRAP, justify="left").pack(
+                anchor="w", pady=(2, 4))
         if spec.help:
-            ttk.Label(self._body, text=spec.help, wraplength=250, justify="left",
+            ttk.Label(self._body, text=spec.help, wraplength=WRAP, justify="left",
                       foreground="#555").pack(anchor="w", pady=(0, 6))
         form = ttk.Frame(self._body)
         form.pack(fill="x")
         form.columnconfigure(1, weight=1)
         row = 0
         for name, _default in spec.fields:
+            fdoc = model.field_doc(block.kind, name)
             if name in CHECK_FIELDS:
                 var = tk.BooleanVar(value=bool(block.fields.get(name)))
                 cb = ttk.Checkbutton(form, text=name, variable=var,
                                      command=lambda b=block: self._apply(b))
-                cb.grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
+                cb.grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 0))
             else:
                 var = tk.StringVar(value=block.fields.get(name, ""))
-                ttk.Label(form, text=name).grid(row=row, column=0, sticky="w", padx=(0, 6))
+                ttk.Label(form, text=name, font=("Segoe UI", 9, "bold")).grid(
+                    row=row, column=0, sticky="nw", padx=(0, 6), pady=(4, 0))
                 ent = ttk.Entry(form, textvariable=var, font=("Consolas", 10))
-                ent.grid(row=row, column=1, sticky="ew", pady=2)
+                ent.grid(row=row, column=1, sticky="ew", pady=(4, 0))
                 ent.bind("<Return>", lambda e, b=block: self._apply(b))
                 ent.bind("<FocusOut>", lambda e, b=block: self._apply(b))
-            self._vars[name] = var
             row += 1
+            if fdoc:
+                ttk.Label(form, text=fdoc, wraplength=WRAP - 40, justify="left",
+                          foreground="#64748b", font=("Segoe UI", 8)).grid(
+                    row=row, column=1, sticky="w", pady=(0, 2))
+                row += 1
+            self._vars[name] = var
         if not spec.fields:
             ttk.Label(form, text="This block has no properties.").grid(
                 row=row, column=0, columnspan=2, sticky="w")
@@ -73,6 +85,11 @@ class EditorPanel(ttk.Frame):
         ttk.Separator(self._body).pack(fill="x", pady=8)
         ttk.Label(self._body, text="Descriptions",
                   font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ttk.Label(self._body, wraplength=WRAP, justify="left", foreground="#64748b",
+                  font=("Segoe UI", 8), text=(
+                      "Your own notes on what goes in and what comes out. Shown on "
+                      "the block when View > descriptions is on; empty uses the "
+                      "automatic text.")).pack(anchor="w")
         auto_in, auto_out = model.describe_io(block)
         desc = ttk.Frame(self._body)
         desc.pack(fill="x")
@@ -80,13 +97,14 @@ class EditorPanel(ttk.Frame):
         for r, (label, attr, auto) in enumerate([("inputs", "desc_in", auto_in),
                                                  ("outputs", "desc_out", auto_out)]):
             var = tk.StringVar(value=getattr(block, attr))
-            ttk.Label(desc, text=label).grid(row=r * 2, column=0, sticky="w", padx=(0, 6))
+            ttk.Label(desc, text=label, font=("Segoe UI", 9, "bold")).grid(
+                row=r * 2, column=0, sticky="w", padx=(0, 6))
             ent = ttk.Entry(desc, textvariable=var)
             ent.grid(row=r * 2, column=1, sticky="ew", pady=2)
             ent.bind("<Return>", lambda e, b=block: self._apply(b))
             ent.bind("<FocusOut>", lambda e, b=block: self._apply(b))
             ttk.Label(desc, text=f"auto: {auto or '(none)'}", foreground="#777",
-                      wraplength=220, justify="left").grid(
+                      wraplength=WRAP - 40, justify="left", font=("Segoe UI", 8)).grid(
                 row=r * 2 + 1, column=1, sticky="w", pady=(0, 4))
             self._vars[attr] = var
 

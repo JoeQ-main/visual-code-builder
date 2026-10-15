@@ -371,8 +371,14 @@ def _stmt_to_block(node: ast.stmt) -> Block:  # noqa: C901 - one branch per kind
 # --------------------------------------------------------------------------
 # Generation: blocks -> source
 # --------------------------------------------------------------------------
-def generate_source(blocks) -> str:
+def generate_source(blocks, spans: dict[int, tuple[int, int]] | None = None) -> str:
+    """Source text for the blocks.
+
+    When ``spans`` is given it is filled with ``block.id -> (first, last)``
+    line numbers, 1-based and inclusive, for every emitted block.
+    """
     lines: list[str] = []
+    spans = spans if spans is not None else {}
     prev: Block | None = None
     for b in blocks:
         if prev is not None:
@@ -381,7 +387,7 @@ def generate_source(blocks) -> str:
                 lines.extend(["", ""])
             elif prev.spec.slots or b.spec.slots or prev.spec.category != b.spec.category:
                 lines.append("")
-        _emit(b, 0, lines)
+        _emit(b, 0, lines, spans)
         prev = b
     return "\n".join(lines) + "\n"
 
@@ -394,11 +400,11 @@ def syntax_error(src: str) -> SyntaxError | None:
     return None
 
 
-def _emit_slot(block: Block, slot: str, indent: int, lines: list[str], required=True):
+def _emit_slot(block: Block, slot: str, indent: int, lines: list[str], spans, required=True):
     kids = block.slots.get(slot, [])
     if kids:
         for k in kids:
-            _emit(k, indent + 1, lines)
+            _emit(k, indent + 1, lines, spans)
     elif required:
         lines.append(INDENT * (indent + 1) + "pass")
 
@@ -408,20 +414,23 @@ def _emit_decorators(block: Block, ind: str, lines: list[str]):
         lines.append(f"{ind}@{d}")
 
 
-def _emit_if(block: Block, indent: int, lines: list[str], keyword: str):
+def _emit_if(block: Block, indent: int, lines: list[str], keyword: str, spans):
     ind = INDENT * indent
+    start = len(lines) + 1
     lines.append(f"{ind}{keyword} {block.fields['test']}:")
-    _emit_slot(block, "body", indent, lines)
+    _emit_slot(block, "body", indent, lines, spans)
     orelse = block.slots.get("orelse", [])
     if len(orelse) == 1 and orelse[0].kind == "elif":
-        _emit_if(orelse[0], indent, lines, "elif")
+        _emit_if(orelse[0], indent, lines, "elif", spans)
     elif orelse:
         lines.append(f"{ind}else:")
-        _emit_slot(block, "orelse", indent, lines)
+        _emit_slot(block, "orelse", indent, lines, spans)
+    spans[block.id] = (start, len(lines))
 
 
-def _emit_except(block: Block, indent: int, lines: list[str], star: str):
+def _emit_except(block: Block, indent: int, lines: list[str], star: str, spans):
     ind = INDENT * indent
+    start = len(lines) + 1
     f = block.fields
     head = f"{ind}except{star}"
     if f.get("type"):
@@ -429,19 +438,23 @@ def _emit_except(block: Block, indent: int, lines: list[str], star: str):
         if f.get("name"):
             head += f" as {f['name']}"
     lines.append(head + ":")
-    _emit_slot(block, "body", indent, lines)
+    _emit_slot(block, "body", indent, lines, spans)
+    spans[block.id] = (start, len(lines))
 
 
-def _emit_case(block: Block, indent: int, lines: list[str]):
+def _emit_case(block: Block, indent: int, lines: list[str], spans):
     ind = INDENT * indent
+    start = len(lines) + 1
     f = block.fields
     guard = f" if {f['guard']}" if f.get("guard") else ""
     lines.append(f"{ind}case {f['pattern']}{guard}:")
-    _emit_slot(block, "body", indent, lines)
+    _emit_slot(block, "body", indent, lines, spans)
+    spans[block.id] = (start, len(lines))
 
 
-def _emit(block: Block, indent: int, lines: list[str]):  # noqa: C901
+def _emit(block: Block, indent: int, lines: list[str], spans):  # noqa: C901
     ind = INDENT * indent
+    start = len(lines) + 1
     f = block.fields
     k = block.kind
     pre = f"{f['async']} " if f.get("async") else ""
@@ -450,55 +463,55 @@ def _emit(block: Block, indent: int, lines: list[str]):  # noqa: C901
         tp = f"[{f['typeparams']}]" if f.get("typeparams") else ""
         ret = f" -> {f['returns']}" if f.get("returns") else ""
         lines.append(f"{ind}{pre}def {f['name']}{tp}({f['args']}){ret}:")
-        _emit_slot(block, "body", indent, lines)
+        _emit_slot(block, "body", indent, lines, spans)
     elif k == "class":
         _emit_decorators(block, ind, lines)
         tp = f"[{f['typeparams']}]" if f.get("typeparams") else ""
         bases = f"({f['bases']})" if f.get("bases") else ""
         lines.append(f"{ind}class {f['name']}{tp}{bases}:")
-        _emit_slot(block, "body", indent, lines)
+        _emit_slot(block, "body", indent, lines, spans)
     elif k in ("if", "elif"):
-        _emit_if(block, indent, lines, "if")
+        _emit_if(block, indent, lines, "if", spans)
     elif k == "for":
         lines.append(f"{ind}{pre}for {f['target']} in {f['iter']}:")
-        _emit_slot(block, "body", indent, lines)
+        _emit_slot(block, "body", indent, lines, spans)
         if block.slots.get("orelse"):
             lines.append(f"{ind}else:")
-            _emit_slot(block, "orelse", indent, lines)
+            _emit_slot(block, "orelse", indent, lines, spans)
     elif k == "while":
         lines.append(f"{ind}while {f['test']}:")
-        _emit_slot(block, "body", indent, lines)
+        _emit_slot(block, "body", indent, lines, spans)
         if block.slots.get("orelse"):
             lines.append(f"{ind}else:")
-            _emit_slot(block, "orelse", indent, lines)
+            _emit_slot(block, "orelse", indent, lines, spans)
     elif k == "try":
         star = "*" if f.get("star") else ""
         lines.append(f"{ind}try:")
-        _emit_slot(block, "body", indent, lines)
+        _emit_slot(block, "body", indent, lines, spans)
         handlers = block.slots.get("handlers", [])
         for h in handlers:
             if h.kind == "except":
-                _emit_except(h, indent, lines, star)
+                _emit_except(h, indent, lines, star, spans)
             else:  # a foreign block dropped in the handlers slot: wrap it
                 lines.append(f"{ind}except Exception:")
-                _emit(h, indent + 1, lines)
+                _emit(h, indent + 1, lines, spans)
         if block.slots.get("orelse"):
             if not handlers:
                 lines.append(f"{ind}except Exception:")
                 lines.append(f"{ind}{INDENT}pass")
             lines.append(f"{ind}else:")
-            _emit_slot(block, "orelse", indent, lines)
+            _emit_slot(block, "orelse", indent, lines, spans)
         if block.slots.get("finalbody") or not handlers:
             lines.append(f"{ind}finally:")
-            _emit_slot(block, "finalbody", indent, lines)
+            _emit_slot(block, "finalbody", indent, lines, spans)
     elif k == "except":
         # Standalone handler: wrap so the output stays valid.
         lines.append(f"{ind}try:")
         lines.append(f"{ind}{INDENT}pass")
-        _emit_except(block, indent, lines, "")
+        _emit_except(block, indent, lines, "", spans)
     elif k == "with":
         lines.append(f"{ind}{pre}with {f['items']}:")
-        _emit_slot(block, "body", indent, lines)
+        _emit_slot(block, "body", indent, lines, spans)
     elif k == "match":
         lines.append(f"{ind}match {f['subject']}:")
         cases = block.slots.get("cases", [])
@@ -507,13 +520,13 @@ def _emit(block: Block, indent: int, lines: list[str]):  # noqa: C901
             lines.append(f"{ind}{INDENT}{INDENT}pass")
         for c in cases:
             if c.kind == "case":
-                _emit_case(c, indent + 1, lines)
+                _emit_case(c, indent + 1, lines, spans)
             else:
                 lines.append(f"{ind}{INDENT}case _:")
-                _emit(c, indent + 2, lines)
+                _emit(c, indent + 2, lines, spans)
     elif k == "case":
         lines.append(f"{ind}match _:")
-        _emit_case(block, indent + 1, lines)
+        _emit_case(block, indent + 1, lines, spans)
     elif k == "return":
         lines.append(f"{ind}return {f['value']}".rstrip())
     elif k == "assign":
@@ -546,6 +559,7 @@ def _emit(block: Block, indent: int, lines: list[str]):  # noqa: C901
         lines.append(f"{ind}type {f['name']}{tp} = {f['value']}")
     else:
         lines.append(f"{ind}pass")
+    spans[block.id] = (start, len(lines))
 
 
 def split_top_level(text: str, sep: str = ",") -> list[str]:
@@ -807,3 +821,111 @@ PALETTE_EXTRA: list[PaletteEntry] = [
 
 def block_from_entry(entry: PaletteEntry) -> Block:
     return new_block(entry.kind, **dict(entry.fields))
+
+
+# --------------------------------------------------------------------------
+# Plain-language documentation for every block kind and field
+# --------------------------------------------------------------------------
+DOCS: dict[str, tuple[str, dict[str, str]]] = {
+    "def": ("Defines a function: a named, reusable piece of code that runs when "
+            "it is called.",
+            {"async": "Make it a coroutine that callers must await.",
+             "decorators": "Decorators applied to the function, comma separated "
+                           "(e.g. staticmethod, lru_cache(maxsize=8)).",
+             "name": "The name used to call the function.",
+             "typeparams": "Generic type parameters, e.g. T or K, V.",
+             "args": "The parameter list exactly as written inside the parentheses.",
+             "returns": "Return type annotation, e.g. int or list[str]."}),
+    "class": ("Defines a class: a blueprint for objects that bundles data and "
+              "methods.",
+              {"decorators": "Decorators applied to the class, comma separated.",
+               "name": "The class name, used to create instances.",
+               "typeparams": "Generic type parameters, e.g. T.",
+               "bases": "Parent classes and class keywords, e.g. Base, metaclass=Meta."}),
+    "if": ("Runs the body only when the condition is true; otherwise runs the "
+           "else slot, if any.",
+           {"test": "The condition, evaluated for truth."}),
+    "elif": ("Another condition tried only when the preceding if/elif was false.",
+             {"test": "The condition, evaluated for truth."}),
+    "for": ("Loops over every item of an iterable. The else slot runs when the "
+            "loop finishes without a break.",
+            {"async": "Iterate an asynchronous iterator (inside async def).",
+             "target": "Variable, or tuple of variables, that receives each item.",
+             "iter": "The iterable being looped over, e.g. range(10) or items."}),
+    "while": ("Repeats the body for as long as the condition stays true. The else "
+              "slot runs when it ends without a break.",
+              {"test": "The condition checked before every iteration."}),
+    "try": ("Runs the body and lets the except handlers catch errors. The else "
+            "slot runs if nothing was raised; finally always runs last.",
+            {"star": "Use except* to handle exception groups."}),
+    "except": ("Catches a matching exception raised in the try body and runs its "
+               "body instead of crashing.",
+               {"type": "Exception class or tuple to catch; empty catches everything.",
+                "name": "Variable bound to the caught exception object."}),
+    "with": ("Enters a context manager, runs the body, then exits it even if an "
+             "error occurs (e.g. a file that is closed afterwards).",
+             {"async": "Use an asynchronous context manager.",
+              "items": "Context expressions, comma separated, each optionally 'as name'."}),
+    "match": ("Compares a value against the case patterns and runs the first one "
+              "that fits.",
+              {"subject": "The value being matched."}),
+    "case": ("One pattern of a match. Its body runs when the pattern fits the "
+             "subject.",
+             {"pattern": "Structural pattern, e.g. [x, y], Point(x=0), 1 | 2, or _ for anything.",
+              "guard": "Extra condition that must also be true for this case."}),
+    "return": ("Ends the current function and hands a value back to the caller.",
+               {"value": "Expression to return; empty returns None."}),
+    "assign": ("Stores the result of an expression in one or more variables.",
+               {"targets": "Variable, attribute, item or unpacking target; chain "
+                           "several with 'a = b'.",
+                "value": "Expression whose result is stored."}),
+    "augassign": ("Updates a variable in place by combining it with a value, "
+                  "e.g. total += price.",
+                  {"target": "The variable being updated.",
+                   "op": "Operator: + - * / // % ** @ & | ^ << >>",
+                   "value": "Value combined with the current contents."}),
+    "annassign": ("Declares a variable with a type hint and optionally assigns it.",
+                  {"target": "The variable being declared.",
+                   "annotation": "The type hint, e.g. int or list[str].",
+                   "value": "Optional initial value."}),
+    "call": ("Calls a function or method for its effect; the result is discarded.",
+             {"value": "The call expression, e.g. print(x) or items.append(y)."}),
+    "expr": ("Evaluates an expression as a statement: a docstring, yield, await "
+             "or any other expression whose value is not stored.",
+             {"value": "The expression."}),
+    "pass": ("Does nothing. A placeholder where Python requires a statement.", {}),
+    "break": ("Leaves the innermost enclosing loop immediately.", {}),
+    "continue": ("Skips the rest of this iteration and starts the next one.", {}),
+    "raise": ("Throws an exception, stopping normal flow until an except catches it.",
+              {"exc": "Exception instance or class; empty re-raises the current one.",
+               "cause": "Exception to chain as the cause (raise ... from ...)."}),
+    "assert": ("Checks that a condition holds and raises AssertionError if not. "
+               "Used for sanity checks during development.",
+               {"test": "The condition expected to be true.",
+                "msg": "Optional message attached to the error."}),
+    "import": ("Loads modules and binds them to names in this file.",
+               {"names": "Modules, comma separated, each optionally 'as alias'."}),
+    "from": ("Imports specific names out of a module.",
+             {"module": "Module path; leading dots make it relative to this package.",
+              "names": "Names to import, each optionally 'as alias', or * for all."}),
+    "global": ("Declares that these names refer to module-level variables, so "
+               "assigning them inside a function updates the global.",
+               {"names": "Variable names, comma separated."}),
+    "nonlocal": ("Declares that these names belong to an enclosing function's "
+                 "scope rather than creating new locals.",
+                 {"names": "Variable names, comma separated."}),
+    "del": ("Removes variables, items or attributes.",
+            {"targets": "What to delete, comma separated, e.g. x, items[0], obj.attr."}),
+    "type": ("Creates a type alias (Python 3.12+), a new name for a type expression.",
+             {"name": "The alias name.",
+              "typeparams": "Generic type parameters, e.g. T.",
+              "value": "The type expression, e.g. list[int] | None."}),
+}
+
+
+def block_doc(kind: str) -> str:
+    return DOCS.get(kind, ("", {}))[0]
+
+
+def field_doc(kind: str, name: str) -> str:
+    return DOCS.get(kind, ("", {}))[1].get(name, "")

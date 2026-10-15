@@ -10,9 +10,11 @@ from . import layout, model
 from .canvas import CanvasView
 from .editor import EditorPanel
 from .model import Block, PaletteEntry
-from .palette import FileExplorer, PalettePanel
+from .palette import FileExplorer, PalettePanel, single_column_width
 
 APP_NAME = "Visual Code Builder"
+EDITOR_W = 330
+PREVIEW_W = 400
 SLOT_HOSTS = {"orelse": "if", "handlers": "try", "finalbody": "try", "cases": "match"}
 
 
@@ -29,6 +31,17 @@ class App(tk.Tk):
         self._bind_keys()
         self.protocol("WM_DELETE_WINDOW", self.quit_app)
         self.new_file()
+        self.after(50, self._init_panes)
+
+    def _init_panes(self):
+        """Blocks pane at the widest single-column width; fixed editor and
+        code pane widths so later content changes never clip them."""
+        self.update_idletasks()
+        total = self._outer.winfo_width()
+        self._outer.sashpos(2, total - PREVIEW_W)
+        self._outer.sashpos(1, total - PREVIEW_W - EDITOR_W)
+        chrome = max(0, self._left.winfo_width() - self.palette.winfo_width())
+        self._outer.sashpos(0, single_column_width() + chrome)
 
     # ------------------------------------------------------------------ UI
     def _build_menu(self):
@@ -71,8 +84,10 @@ class App(tk.Tk):
     def _build_panes(self):
         outer = ttk.PanedWindow(self, orient="horizontal")
         outer.pack(fill="both", expand=True)
+        self._outer = outer
 
         left = ttk.Notebook(outer, width=250)
+        self._left = left
         self.palette = PalettePanel(left, on_pick=self.pick_entry, on_hint=self.set_hint)
         self.explorer = FileExplorer(left, on_open=self.open_file)
         left.add(self.palette, text="Blocks")
@@ -96,6 +111,8 @@ class App(tk.Tk):
         self.syntax_label.pack(side="left", padx=8)
         self.code = tk.Text(preview, width=48, font=("Consolas", 10), wrap="none",
                             state="disabled", background="#f8fafc")
+        self.code.tag_configure("selected", background="#fde68a")
+        self._spans: dict[int, tuple[int, int]] = {}
         ysb = ttk.Scrollbar(preview, orient="vertical", command=self.code.yview)
         xsb = ttk.Scrollbar(preview, orient="horizontal", command=self.code.xview)
         self.code.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
@@ -128,6 +145,7 @@ class App(tk.Tk):
     # ------------------------------------------------------------ callbacks
     def on_select(self, block: Block | None):
         self.editor.show(block)
+        self.highlight_code(block)
         if block is not None:
             self.set_status(f"Selected {block.kind}: {block.title()}")
 
@@ -137,10 +155,24 @@ class App(tk.Tk):
         if self.canvas.selected is not None:
             self.editor.show(self.canvas.selected)
         self.refresh_preview()
+        self.highlight_code(self.canvas.selected)
         self.update_title()
 
+    def highlight_code(self, block: Block | None):
+        """Mark the generated lines that belong to the selected block."""
+        self.code.tag_remove("selected", "1.0", "end")
+        if block is None:
+            return
+        span = self._spans.get(block.id)
+        if span is None:
+            return
+        first, last = span
+        self.code.tag_add("selected", f"{first}.0", f"{last}.end+1c")
+        self.code.see(f"{last}.0")
+        self.code.see(f"{first}.0")
+
     def refresh_preview(self):
-        src = self.canvas.source()
+        src, self._spans = self.canvas.source_with_spans()
         self.code.configure(state="normal")
         self.code.delete("1.0", "end")
         self.code.insert("1.0", src)

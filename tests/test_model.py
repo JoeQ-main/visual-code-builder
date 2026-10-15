@@ -195,3 +195,38 @@ def test_walk_all_blocks_includes_nested():
     everything = list(model.walk(blocks))
     assert any(b.kind == "case" for b in everything)
     assert any(b.kind == "except" for b in everything)
+
+
+def test_generate_records_line_spans():
+    blocks = model.parse_source(SAMPLE)
+    spans = {}
+    src = model.generate_source(blocks, spans)
+    lines = src.split("\n")
+    for b in model.walk(blocks):
+        assert b.id in spans, b.kind
+    helper = blocks[6]
+    first, last = spans[helper.id]
+    assert lines[first - 1] == "@decorator"
+    assert lines[first] .startswith("def helper(")
+    assert lines[last - 1].strip() == "return helper(a, b)"
+    if_block = helper.slots["body"][2]
+    elif_block = if_block.slots["orelse"][0]
+    f1, l1 = spans[if_block.id]
+    f2, l2 = spans[elif_block.id]
+    assert lines[f1 - 1].strip().startswith("if a > b")
+    assert lines[f2 - 1].strip().startswith("elif a == b")
+    assert f1 < f2 <= l2 <= l1
+    try_block = helper.slots["body"][5]
+    handler = try_block.slots["handlers"][0]
+    hf, hl = spans[handler.id]
+    assert lines[hf - 1].strip().startswith("except ZeroDivisionError")
+    case = blocks[-3].slots["cases"][0]
+    cf, cl = spans[case.id]
+    assert lines[cf - 1].strip().startswith("case [")
+
+
+def test_every_kind_and_field_is_documented():
+    for kind, spec in model.SPECS.items():
+        assert model.block_doc(kind), kind
+        for name, _ in spec.fields:
+            assert model.field_doc(kind, name), f"{kind}.{name}"

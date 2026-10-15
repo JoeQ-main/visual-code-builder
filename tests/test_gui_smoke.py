@@ -201,4 +201,40 @@ def test_palette_hint_uses_correct_article(app):
     grid, buttons = app.palette._grids[1]
     buttons[1].event_generate("<Enter>")
     buttons[1].event_generate("<Leave>")
-    assert "Add an assign block." in hints
+    assert any(h.startswith("Add an assign block.") for h in hints)
+
+
+def test_selecting_a_block_highlights_its_code(app):
+    app.open_file(str(SAMPLE))
+    app.update()
+    area = by_name(app, "area")
+    app.canvas.select(area)
+    ranges = app.code.tag_ranges("selected")
+    assert ranges, "no highlight"
+    text = app.code.get(ranges[0], ranges[1])
+    assert text.startswith("def area(")
+    assert text.rstrip().endswith("return math.pi * radius ** 2")
+    app.canvas.select(None)
+    assert not app.code.tag_ranges("selected")
+
+
+def test_editor_shows_docs(app):
+    app.pick_entry(next(e for e in model.PALETTE if e.word == "for"))
+    texts = []
+
+    def collect(w):
+        try:
+            texts.append(str(w.cget("text")))
+        except Exception:
+            pass
+        for c in w.winfo_children():
+            collect(c)
+    collect(app.editor)
+    assert any("Loops over every item" in t for t in texts)
+    assert any("receives each item" in t for t in texts)
+
+
+def test_single_column_width_is_the_widest_one_column_width():
+    from vcb.palette import columns_for_width, single_column_width
+    w = single_column_width()
+    assert columns_for_width(w) == 1 and columns_for_width(w + 1) == 2

@@ -80,6 +80,11 @@ class CanvasView(tk.Frame):
         """Module order is the block list, not the canvas position."""
         return model.generate_source(self.blocks)
 
+    def source_with_spans(self) -> tuple[str, dict[int, tuple[int, int]]]:
+        """Source plus ``block.id -> (first line, last line)`` for every block."""
+        spans: dict[int, tuple[int, int]] = {}
+        return model.generate_source(self.blocks, spans), spans
+
     def place_top_level(self, block: Block):
         """Insert a top-level block into the module order by its position.
 
