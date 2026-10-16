@@ -67,13 +67,25 @@ SLOT_LABELS = {"handlers": "catch"}
 # --------------------------------------------------------------------------
 # Parsing
 # --------------------------------------------------------------------------
+MISSING_MESSAGE = ("JavaScript support needs the esprima package: "
+                   "run  python -m pip install esprima")
+
+
 def _esprima():
     try:
         import esprima  # noqa: WPS433 - optional dependency
     except ImportError as e:  # pragma: no cover
-        raise ImportError("JavaScript support needs the esprima package: "
-                          "run  pip install esprima") from e
+        raise ImportError(MISSING_MESSAGE) from e
     return esprima
+
+
+def available() -> bool:
+    """True when the esprima parser can be imported."""
+    try:
+        _esprima()
+    except ImportError:
+        return False
+    return True
 
 
 def _to_syntax_error(e) -> SyntaxError:
@@ -594,7 +606,16 @@ def describe_io(block: Block) -> tuple[str, str]:  # noqa: C901
 
 
 def called_names(block: Block) -> list[str]:
-    return [m for m in _CALL.findall(model.shallow_source(block)) if m not in _RESERVED]
+    """Names called in this block's own text (not its children).
+
+    A definition's header, e.g. ``function area(radius)``, looks like a call
+    of its own name to the regex, so that name is excluded for definitions.
+    """
+    names = [m for m in _CALL.findall(model.shallow_source(block)) if m not in _RESERVED]
+    if block.kind in JAVASCRIPT.def_kinds:
+        own = block.fields.get("name")
+        names = [n for n in names if n != own]
+    return names
 
 
 def function_block(entry: FunctionEntry) -> Block:

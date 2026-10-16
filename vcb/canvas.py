@@ -58,6 +58,7 @@ class CanvasView(tk.Frame):
         self.show_calls = True
         self._drag: dict | None = None
         self._pan = False
+        self._edges: list | None = None   # call_edges cache; None = stale
         self._bold = tkfont.Font(family="Consolas", size=11, weight="bold")
         self._slot_font = tkfont.Font(family="Segoe UI", size=8, weight="bold")
 
@@ -87,6 +88,7 @@ class CanvasView(tk.Frame):
         top-level blocks), blocks whose kind and title match keep their old
         position and expanded state; everything is re-arranged otherwise."""
         self.blocks = list(blocks)
+        self._edges = None
         if lang is not None:
             self.lang = lang
         elif self.blocks:
@@ -207,18 +209,31 @@ class CanvasView(tk.Frame):
         self.show_calls = flag
         self.redraw()
 
-    def _changed(self):
+    def mark_changed(self):
+        """Block text or structure changed: drop caches and redraw."""
+        self._edges = None
         self.redraw()
+
+    def call_edges(self):
+        """Call edges, re-derived only after a change (deriving them parses
+        every block, far too slow to repeat on each mouse-move redraw)."""
+        if self._edges is None:
+            self._edges = model.call_edges(self.blocks)
+        return self._edges
+
+    def _changed(self):
+        self.mark_changed()
         self.on_change()
 
     # --------------------------------------------------------------- drawing
     def redraw(self):
         c = self.canvas
         c.delete("all")
-        layout.layout_all(self.blocks, self.show_desc)
+        # measure once, resolve overlaps using the measured heights, place once
+        layout.measure_all(self.blocks, self.show_desc)
         dragging = self._drag["block"] if self._drag and self._drag.get("moved") else None
         layout.push_apart(self.blocks, skip=dragging)
-        layout.layout_all(self.blocks, self.show_desc)
+        layout.place_all(self.blocks)
         self._draw_column_labels()
         for b in self.blocks:
             self._draw_block(b)
@@ -398,7 +413,7 @@ class CanvasView(tk.Frame):
         of its header; and each line is drawn over a background halo, so
         where lines cross, the one on top visibly hops the other.
         """
-        edges = model.call_edges(self.blocks)
+        edges = self.call_edges()
         if not edges:
             return
         right_gutter = max(b.x + b.w for b in model.walk(self.blocks)) + 30

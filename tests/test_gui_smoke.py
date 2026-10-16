@@ -22,6 +22,7 @@ def app():
     _app.path = None
     _app.modified = False
     _app.canvas.set_blocks([])
+    _app.refresh_preview(force=True)   # drop any pane edits a test left behind
     _app.update()
     yield _app
 
@@ -329,3 +330,85 @@ def test_palette_buttons_show_tooltips(app):
     from vcb.palette import function_hint
     text = function_hint(model.FUNCTIONS[2])
     assert text.startswith("len(obj)") and "in: " in text and "out: " in text
+
+
+
+def test_save_applies_pending_pane_edits(app, tmp_path):
+    app.pick_entry(next(e for e in model.PALETTE if e.word == "pass"))
+    app.code.insert("end", "\nx = 1\n")
+    target = tmp_path / "pending.py"
+    assert app._write(str(target))
+    assert "x = 1" in target.read_text()
+    assert app.canvas.blocks[-1].title() == "x = 1"
+
+
+def test_canvas_change_keeps_unapplied_pane_edits(app):
+    app.open_file(str(SAMPLE))
+    app.update()
+    app.code.insert("end", "\ndef broken(:\n")
+    assert not app.apply_code(silent=True)
+    app.pick_entry(next(e for e in model.PALETTE if e.word == "pass"))   # on_change
+    assert "def broken(:" in app.code.get("1.0", "end")
+    assert "edited" in app.syntax_label.cget("text")
+    assert not app.code.tag_ranges("selected")
+    # discarding is now guarded even though no block changed
+    app.modified = False
+    assert app._code_edited()
+    app.refresh_preview(force=True)
+    assert "def broken(:" not in app.code.get("1.0", "end")
+
+
+def test_editor_keeps_widgets_on_change(app):
+    app.open_file(str(SAMPLE))
+    app.update()
+    fdef = by_name(app, "area")
+    app.canvas.select(fdef)
+    before = app.editor._auto_labels["desc_in"]
+    app.editor._vars["args"].set("radius, scale")
+    app.editor._apply(fdef)
+    assert app.editor._auto_labels["desc_in"] is before          # not rebuilt
+    assert "scale" in before.cget("text")                         # but refreshed
+
+
+def test_open_file_reports_undecodable_file(app, tmp_path, monkeypatch):
+    bad = tmp_path / "latin.py"
+    bad.write_bytes("x = 'caf\xe9'\n".encode("latin-1"))
+    shown = []
+    monkeypatch.setattr("vcb.app.messagebox.showerror", lambda *a: shown.append(a))
+    app.open_file(str(bad))
+    assert shown and "Cannot read" in shown[0][1]
+
+
+def test_new_js_file_without_esprima_is_refused(app, monkeypatch):
+    from vcb import js
+    monkeypatch.setattr(js, "_esprima", lambda: (_ for _ in ()).throw(ImportError(js.MISSING_MESSAGE)))
+    shown = []
+    monkeypatch.setattr("vcb.app.messagebox.showerror", lambda *a: shown.append(a))
+    app.new_file("javascript")
+    assert shown and "esprima" in shown[0][1]
+    assert app.lang == "python"
+    app._show_syntax("x = 1")          # python still fine
+    app.lang = "javascript"
+    assert app._show_syntax("x") is None and "esprima" in app.syntax_label.cget("text")
+    app.lang = "python"
+
+
+def test_call_edges_cached_until_change(app, monkeypatch):
+    app.open_file(str(SAMPLE))
+    app.update()
+    calls = []
+    real = model.call_edges
+    monkeypatch.setattr(model, "call_edges", lambda blocks: calls.append(1) or real(blocks))
+    app.canvas.mark_changed()
+    app.canvas.redraw()
+    app.canvas.redraw()
+    assert len(calls) == 1
+    app.canvas.mark_changed()
+    assert len(calls) == 2
+
+
+def test_pane_initialiser_stops_retrying(app):
+    app._pane_tries = 10 ** 6
+    pending_before = len(app.tk.call("after", "info"))
+    app._init_panes()
+    assert len(app.tk.call("after", "info")) <= pending_before

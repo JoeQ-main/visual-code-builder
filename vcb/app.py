@@ -16,6 +16,7 @@ from .palette import FileExplorer, FunctionPalette, PalettePanel, single_column_
 APP_NAME = "Visual Code Builder"
 EDITOR_W = 330
 PREVIEW_W = 400
+PANE_RETRIES = 30          # x 100 ms before giving up on a small window
 
 
 class App(tk.Tk):
@@ -32,6 +33,7 @@ class App(tk.Tk):
         self._bind_keys()
         self.protocol("WM_DELETE_WINDOW", self.quit_app)
         self.new_file()
+        self._pane_tries = 0
         self.after(50, self._init_panes)
 
     def _init_panes(self):
@@ -40,12 +42,18 @@ class App(tk.Tk):
         self.update_idletasks()
         total = self._outer.winfo_width()
         if total < EDITOR_W + PREVIEW_W + 300:
-            # The window is not laid out yet (or is tiny); try again shortly
-            # rather than clamping every sash to zero.
-            self.after(100, self._init_panes)
-            return
-        self._outer.sashpos(2, total - PREVIEW_W)
-        self._outer.sashpos(1, total - PREVIEW_W - EDITOR_W)
+            # Not laid out yet: retry for a few seconds, then give up on the
+            # fixed right-hand widths (small window) but still set the left
+            # pane, rather than clamping every sash to zero or looping forever.
+            self._pane_tries += 1
+            if self._pane_tries < PANE_RETRIES:
+                self.after(100, self._init_panes)
+                return
+            if total < 400:
+                return
+        else:
+            self._outer.sashpos(2, total - PREVIEW_W)
+            self._outer.sashpos(1, total - PREVIEW_W - EDITOR_W)
         chrome = max(0, self._left.winfo_width() - self.palette.winfo_width())
         self._outer.sashpos(0, single_column_width() + chrome)
 
@@ -178,9 +186,10 @@ class App(tk.Tk):
 
     def on_change(self):
         self.modified = True
-        self.canvas.redraw()
-        if self.canvas.selected is not None:
-            self.editor.show(self.canvas.selected)
+        self.canvas.mark_changed()
+        # Update the editor's automatic descriptions in place: rebuilding the
+        # form would destroy the field that has keyboard focus.
+        self.editor.refresh()
         self.refresh_preview()
         self.highlight_code(self.canvas.selected)
         self.update_title()
@@ -188,7 +197,7 @@ class App(tk.Tk):
     def highlight_code(self, block: Block | None):
         """Mark the generated lines that belong to the selected block."""
         self.code.tag_remove("selected", "1.0", "end")
-        if block is None:
+        if block is None or self._code_edited():
             return
         span = self._spans.get(block.id)
         if span is None:
@@ -198,7 +207,15 @@ class App(tk.Tk):
         self.code.see(f"{last}.0")
         self.code.see(f"{first}.0")
 
-    def refresh_preview(self):
+    def refresh_preview(self, force: bool = False):
+        """Show the blocks' source in the Real code pane.
+
+        Text the user typed into the pane but has not applied is never
+        overwritten unless ``force`` is given (after an apply, open or new).
+        """
+        if not force and self._code_edited():
+            self._mark_pane_edited()
+            return
         src, self._spans = self.canvas.source_with_spans()
         self._last_src = src
         self.code.delete("1.0", "end")
@@ -206,8 +223,16 @@ class App(tk.Tk):
         self.code.edit_reset()
         self._show_syntax(src)
 
+    def _mark_pane_edited(self):
+        self.syntax_label.configure(
+            text="edited: click Apply or leave the pane", foreground="#b45309")
+
     def _show_syntax(self, src: str) -> SyntaxError | None:
-        err = model.syntax_error(src, self.lang)
+        try:
+            err = model.syntax_error(src, self.lang)
+        except ImportError as e:
+            self.syntax_label.configure(text=str(e), foreground="#b91c1c")
+            return None
         if err is None:
             self.syntax_label.configure(text="syntax OK", foreground="#15803d")
         else:
@@ -225,8 +250,7 @@ class App(tk.Tk):
         if event is not None and event.keysym in ("Tab", "Shift_L", "Shift_R"):
             return
         if self._code_edited():
-            self.syntax_label.configure(
-                text="edited: click Apply or leave the pane", foreground="#b45309")
+            self._mark_pane_edited()
 
     def apply_code(self, silent: bool = False) -> bool:
         """Re-parse the Real code pane into blocks when it was edited."""
@@ -243,7 +267,7 @@ class App(tk.Tk):
         self.canvas.set_blocks(blocks, keep_positions_from=self.canvas.blocks,
                                lang=self.lang)
         self.modified = True
-        self.refresh_preview()
+        self.refresh_preview(force=True)
         self.update_title()
         self.set_status("Applied the edited code to the canvas.")
         return True
@@ -366,7 +390,7 @@ class App(tk.Tk):
 
     # ---------------------------------------------------------------- files
     def confirm_discard(self) -> bool:
-        if not self.modified:
+        if not self.modified and not self._code_edited():
             return True
         ans = messagebox.askyesnocancel(APP_NAME, "Save changes to the current file?")
         if ans is None:
@@ -386,11 +410,14 @@ class App(tk.Tk):
         if not self.confirm_discard():
             return
         lang = lang or self.lang
+        if lang == "javascript" and not js.available():
+            messagebox.showerror(APP_NAME, js.MISSING_MESSAGE)
+            return
         self.path = None
         self.set_language(lang)
         self.canvas.set_blocks([], lang=lang)
         self.modified = False
-        self.refresh_preview()
+        self.refresh_preview(force=True)
         self.update_title()
         self.set_status(f"New {self.language().label} file. Add blocks from the Blocks tab.")
 
@@ -412,14 +439,14 @@ class App(tk.Tk):
         except ImportError as e:
             messagebox.showerror(APP_NAME, str(e))
             return
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             messagebox.showerror(APP_NAME, f"Cannot read {path}:\n{e}")
             return
         self.path = path
         self.set_language(lang)
         self.canvas.set_blocks(blocks, lang=lang)
         self.modified = False
-        self.refresh_preview()
+        self.refresh_preview(force=True)
         self.update_title()
         self.set_status(f"Opened {path}  ({self.language().label}, "
                         f"{len(blocks)} top-level blocks)")
@@ -440,8 +467,16 @@ class App(tk.Tk):
         return self._write(path)
 
     def _write(self, path: str) -> bool:
+        # Text typed into the Real code pane but not yet applied is part of
+        # the document: apply it first so the save never drops it.
+        if not self.apply_code():
+            return False
         src = self.canvas.source()
-        err = model.syntax_error(src, self.lang)
+        try:
+            err = model.syntax_error(src, self.lang)
+        except ImportError as e:
+            messagebox.showerror(APP_NAME, str(e))
+            return False
         if err is not None:
             if not messagebox.askyesno(
                     APP_NAME, f"The generated code has a syntax error on line "

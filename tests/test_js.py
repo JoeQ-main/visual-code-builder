@@ -147,3 +147,15 @@ def test_slot_labels_say_catch_for_js():
     assert model.slot_label(blocks[0], "handlers") == "catch"
     py = model.parse_source("try:\n    pass\nexcept E:\n    pass")
     assert model.slot_label(py[0], "handlers") == "except"
+
+
+def test_definitions_do_not_call_themselves():
+    blocks = model.parse_source(SAMPLE.read_text(), JS)
+    for src, dst in model.call_edges(blocks):
+        assert src is not dst
+        assert not (src.kind in ("function", "class", "method")
+                    and src.fields.get("name") == dst.fields.get("name"))
+    # genuine recursion inside the body is still found
+    rec = model.parse_source("function f(n) { return n ? f(n - 1) : 0; }", JS)
+    edges = model.call_edges(rec)
+    assert len(edges) == 1 and edges[0][0].kind == "return" and edges[0][1] is rec[0]

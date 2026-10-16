@@ -121,10 +121,19 @@ def title_parts(block: Block) -> tuple[str, str]:
     return "", first
 
 
-def layout_all(blocks, show_desc: bool):
+def measure_all(blocks, show_desc: bool):
     for b in blocks:
         measure(b, show_desc)
+
+
+def place_all(blocks):
+    for b in blocks:
         place(b, b.x, b.y)
+
+
+def layout_all(blocks, show_desc: bool):
+    measure_all(blocks, show_desc)
+    place_all(blocks)
 
 
 COLUMN_GAP = 150     # room for the call-line channel between the columns

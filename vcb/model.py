@@ -265,11 +265,6 @@ def is_ancestor(maybe_ancestor: Block, block: Block) -> bool:
     return False
 
 
-def ordered_top_level(blocks) -> list[Block]:
-    """Module order is top-to-bottom, then left-to-right, on the canvas."""
-    return sorted(blocks, key=lambda b: (b.y, b.x, b.id))
-
-
 def clone_block(block: Block) -> Block:
     """Deep copy of a block and its children with fresh ids and no parent."""
     copy = Block(block.kind, fields=dict(block.fields),

@@ -18,6 +18,7 @@ class EditorPanel(ttk.Frame):
         self.on_delete = on_delete
         self.block: Block | None = None
         self._vars: dict[str, tk.Variable] = {}
+        self._auto_labels: dict[str, ttk.Label] = {}
         self._body = ttk.Frame(self)
         self._body.pack(fill="both", expand=True)
         self.show(None)
@@ -27,6 +28,7 @@ class EditorPanel(ttk.Frame):
         for w in self._body.winfo_children():
             w.destroy()
         self._vars = {}
+        self._auto_labels = {}
         self.block = block
         if block is None:
             ttk.Label(self._body, text="No block selected.",
@@ -103,9 +105,10 @@ class EditorPanel(ttk.Frame):
             ent.grid(row=r * 2, column=1, sticky="ew", pady=2)
             ent.bind("<Return>", lambda e, b=block: self._apply(b))
             ent.bind("<FocusOut>", lambda e, b=block: self._apply(b))
-            ttk.Label(desc, text=f"auto: {auto or '(none)'}", foreground="#777",
-                      wraplength=WRAP - 40, justify="left", font=("Segoe UI", 8)).grid(
-                row=r * 2 + 1, column=1, sticky="w", pady=(0, 4))
+            auto_label = ttk.Label(desc, text=f"auto: {auto or '(none)'}", foreground="#777",
+                                   wraplength=WRAP - 40, justify="left", font=("Segoe UI", 8))
+            auto_label.grid(row=r * 2 + 1, column=1, sticky="w", pady=(0, 4))
+            self._auto_labels[attr] = auto_label
             self._vars[attr] = var
 
         ttk.Separator(self._body).pack(fill="x", pady=8)
@@ -114,6 +117,15 @@ class EditorPanel(ttk.Frame):
         ttk.Button(btns, text="Apply", command=lambda b=block: self._apply(b)).pack(
             side="left")
         ttk.Button(btns, text="Delete block", command=self.on_delete).pack(side="right")
+
+    def refresh(self):
+        """Update the parts of the form derived from the block (the automatic
+        descriptions) without rebuilding it, so the focused field survives."""
+        if self.block is None or not self._auto_labels:
+            return
+        auto_in, auto_out = model.describe_io(self.block)
+        for attr, auto in (("desc_in", auto_in), ("desc_out", auto_out)):
+            self._auto_labels[attr].configure(text=f"auto: {auto or '(none)'}")
 
     def _apply(self, block: Block):
         if block is not self.block:
